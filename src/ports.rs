@@ -1,0 +1,475 @@
+use crate::docker;
+use crate::framework::{detect_framework, detect_framework_from_command, is_dev_process};
+use crate::model::{DockerInfo, PortInfo, ProcessStatus, RawPortEntry};
+use crate::platform::{self, PlatformScanner};
+use crate::util::{
+    find_project_root, format_memory, format_uptime_from_lstart, path_basename, run_output,
+};
+use std::collections::{HashMap, HashSet};
+use std::path::Path;
+
+pub fn get_listening_ports(detailed: bool) -> Vec<PortInfo> {
+    get_listening_ports_with(platform::native_scanner(), detailed, None)
+}
+
+pub fn get_port_details(port: u16) -> Option<PortInfo> {
+    get_port_details_with(platform::native_scanner(), port, None)
+}
+
+pub(crate) fn get_listening_ports_with(
+    scanner: &dyn PlatformScanner,
+    detailed: bool,
+    docker_map_override: Option<HashMap<u16, DockerInfo>>,
+) -> Vec<PortInfo> {
+    let entries = scanner.get_listening_ports_raw();
+    enrich_port_entries(scanner, entries, detailed, docker_map_override)
+}
+
+pub(crate) fn get_listening_ports_from_entries(
+    scanner: &dyn PlatformScanner,
+    entries: Vec<RawPortEntry>,
+    detailed: bool,
+    docker_map_override: Option<HashMap<u16, DockerInfo>>,
+) -> Vec<PortInfo> {
+    enrich_port_entries(scanner, entries, detailed, docker_map_override)
+}
+
+pub(crate) fn get_port_details_with(
+    scanner: &dyn PlatformScanner,
+    port: u16,
+    docker_map_override: Option<HashMap<u16, DockerInfo>>,
+) -> Option<PortInfo> {
+    let entry = scanner
+        .get_listening_ports_raw()
+        .into_iter()
+        .find(|p| p.port == port)?;
+    enrich_port_entries(scanner, vec![entry], true, docker_map_override)
+        .into_iter()
+        .next()
+}
+
+fn enrich_port_entries(
+    scanner: &dyn PlatformScanner,
+    entries: Vec<RawPortEntry>,
+    detailed: bool,
+    docker_map_override: Option<HashMap<u16, DockerInfo>>,
+) -> Vec<PortInfo> {
+    enrich_port_entries_with_docker_map(
+        scanner,
+        entries,
+        detailed,
+        docker_map_override,
+        docker::batch_docker_info,
+    )
+}
+
+fn enrich_port_entries_with_docker_map<DockerMap>(
+    scanner: &dyn PlatformScanner,
+    entries: Vec<RawPortEntry>,
+    detailed: bool,
+    docker_map_override: Option<HashMap<u16, DockerInfo>>,
+    docker_map_provider: DockerMap,
+) -> Vec<PortInfo>
+where
+    DockerMap: Fn() -> HashMap<u16, DockerInfo>,
+{
+    let pids: Vec<u32> = entries
+        .iter()
+        .map(|e| e.pid)
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    let ps_map = scanner.batch_process_info(&pids);
+    let cwd_map = scanner.batch_cwd(&pids);
+    let has_docker = entries
+        .iter()
+        .any(|e| e.process_name.starts_with("com.docke") || e.process_name == "docker");
+    let docker_map = match docker_map_override {
+        Some(map) => map,
+        None if has_docker => docker_map_provider(),
+        None => Default::default(),
+    };
+
+    let mut results = Vec::new();
+    for entry in entries {
+        let ps = ps_map.get(&entry.pid);
+        let cwd = cwd_map.get(&entry.pid);
+        let mut info = PortInfo {
+            port: entry.port,
+            pid: entry.pid,
+            process_name: entry.process_name.clone(),
+            raw_name: entry.process_name.clone(),
+            command: ps.map(|p| p.command.clone()).unwrap_or_default(),
+            cwd: None,
+            project_name: None,
+            framework: None,
+            uptime: None,
+            start_time: None,
+            status: ProcessStatus::Healthy,
+            memory: None,
+            git_branch: None,
+            process_tree: Vec::new(),
+        };
+
+        if let Some(ps) = ps {
+            if ps.stat.contains('Z') {
+                info.status = ProcessStatus::Zombie;
+            } else if ps.ppid == Some(1) && is_dev_process(&entry.process_name, &ps.command) {
+                info.status = ProcessStatus::Orphaned;
+            }
+            if ps.rss_kb > 0 {
+                info.memory = Some(format_memory(ps.rss_kb));
+            }
+            if let Some(lstart) = &ps.lstart {
+                info.start_time = Some(lstart.clone());
+                info.uptime = format_uptime_from_lstart(lstart);
+            }
+            info.framework = detect_framework_from_command(&ps.command, &entry.process_name);
+        }
+
+        let docker = docker_map.get(&entry.port);
+        if let Some(docker) = docker {
+            info.project_name = Some(docker.container_name.clone());
+            info.framework = Some(docker.framework.clone());
+            info.process_name = "docker".to_string();
+        }
+
+        if let Some(cwd) = cwd {
+            if docker.is_none() {
+                let project_root = find_project_root(cwd);
+                info.cwd = Some(project_root.clone());
+                info.project_name = path_basename(&project_root);
+                if info.framework.is_none() {
+                    info.framework = detect_framework(&project_root);
+                }
+                if detailed {
+                    info.git_branch = git_branch(&project_root);
+                }
+            }
+        }
+
+        if detailed {
+            info.process_tree = scanner.get_process_tree(entry.pid);
+        }
+        results.push(info);
+    }
+    results.sort_by_key(|p| p.port);
+    results
+}
+
+fn git_branch(root: &Path) -> Option<String> {
+    run_output(
+        "git",
+        [
+            "-C",
+            root.to_string_lossy().as_ref(),
+            "rev-parse",
+            "--abbrev-ref",
+            "HEAD",
+        ],
+        Some(3000),
+    )
+    .filter(|s| !s.is_empty() && s != "HEAD")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        enrich_port_entries_with_docker_map, get_listening_ports_with, get_port_details_with,
+    };
+    use crate::framework::is_dev_process;
+    use crate::model::{
+        DockerInfo, LogFile, ProcessStatus, ProcessTreeNode, RawPortEntry, RawProcessDetails,
+        RawProcessEntry,
+    };
+    use crate::platform::PlatformScanner;
+    use crate::test_support::FakePlatformScanner;
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn fake_platform_enriches_ports_default_filter_all_and_details() {
+        let project = temp_project("ports-fake");
+        fs::write(
+            project.join("package.json"),
+            r#"{"dependencies":{"vite":"latest"}}"#,
+        )
+        .unwrap();
+
+        let mut fake = FakePlatformScanner {
+            listening_ports: vec![
+                RawPortEntry {
+                    port: 5000,
+                    pid: 50,
+                    process_name: "Spotify".to_string(),
+                },
+                RawPortEntry {
+                    port: 3000,
+                    pid: 42,
+                    process_name: "node".to_string(),
+                },
+                RawPortEntry {
+                    port: 5432,
+                    pid: 99,
+                    process_name: "com.docker.backend".to_string(),
+                },
+            ],
+            ..Default::default()
+        };
+        fake.process_details.insert(
+            42,
+            RawProcessDetails {
+                pid: 42,
+                ppid: Some(1),
+                stat: "S".to_string(),
+                rss_kb: 2048,
+                lstart: Some("Jan 01 00:00:00 2000".to_string()),
+                command: "node /repo/server.js".to_string(),
+            },
+        );
+        fake.process_details.insert(
+            50,
+            RawProcessDetails {
+                pid: 50,
+                ppid: Some(2),
+                stat: "S".to_string(),
+                rss_kb: 1024,
+                lstart: None,
+                command: "Spotify".to_string(),
+            },
+        );
+        fake.process_details.insert(
+            99,
+            RawProcessDetails {
+                pid: 99,
+                ppid: Some(2),
+                stat: "S".to_string(),
+                rss_kb: 4096,
+                lstart: None,
+                command: "com.docker.backend".to_string(),
+            },
+        );
+        fake.cwd.insert(42, project.clone());
+        fake.process_trees.insert(
+            42,
+            vec![ProcessTreeNode {
+                pid: 42,
+                ppid: Some(1),
+                name: "node".to_string(),
+            }],
+        );
+
+        let docker_map = HashMap::from([(
+            5432,
+            DockerInfo {
+                host_port: 5432,
+                container_name: "pg".to_string(),
+                image: "postgres:16".to_string(),
+                framework: "PostgreSQL".to_string(),
+            },
+        )]);
+
+        let all_ports = get_listening_ports_with(&fake, false, Some(docker_map.clone()));
+        assert_eq!(
+            all_ports.iter().map(|p| p.port).collect::<Vec<_>>(),
+            vec![3000, 5000, 5432]
+        );
+        let default_ports: Vec<_> = all_ports
+            .iter()
+            .filter(|p| is_dev_process(&p.process_name, &p.command))
+            .map(|p| p.port)
+            .collect();
+        assert_eq!(default_ports, vec![3000, 5432]);
+
+        let expected_project = project_name(&project);
+        let node = all_ports.iter().find(|p| p.port == 3000).unwrap();
+        assert_eq!(
+            node.project_name.as_deref(),
+            Some(expected_project.as_str())
+        );
+        assert_eq!(node.framework.as_deref(), Some("Node.js"));
+        assert_eq!(node.status, ProcessStatus::Orphaned);
+        assert_eq!(node.memory.as_deref(), Some("2.0 MB"));
+
+        let docker = all_ports.iter().find(|p| p.port == 5432).unwrap();
+        assert_eq!(docker.process_name, "docker");
+        assert_eq!(docker.project_name.as_deref(), Some("pg"));
+        assert_eq!(docker.framework.as_deref(), Some("PostgreSQL"));
+
+        let detail = get_port_details_with(&fake, 3000, Some(docker_map)).unwrap();
+        assert_eq!(detail.port, 3000);
+        assert_eq!(detail.process_tree.len(), 1);
+
+        fs::remove_dir_all(project).unwrap();
+    }
+
+    #[test]
+    fn port_detail_only_enriches_target_port() {
+        let mut inner = FakePlatformScanner {
+            listening_ports: vec![
+                RawPortEntry {
+                    port: 3000,
+                    pid: 42,
+                    process_name: "node".to_string(),
+                },
+                RawPortEntry {
+                    port: 4000,
+                    pid: 50,
+                    process_name: "node".to_string(),
+                },
+            ],
+            ..Default::default()
+        };
+        inner.process_details.insert(
+            42,
+            RawProcessDetails {
+                pid: 42,
+                ppid: Some(1),
+                stat: "S".to_string(),
+                rss_kb: 2048,
+                lstart: Some("Jan 01 00:00:00 2000".to_string()),
+                command: "node a.js".to_string(),
+            },
+        );
+        inner.process_details.insert(
+            50,
+            RawProcessDetails {
+                pid: 50,
+                ppid: Some(2),
+                stat: "S".to_string(),
+                rss_kb: 1024,
+                lstart: None,
+                command: "node b.js".to_string(),
+            },
+        );
+        inner.process_trees.insert(
+            42,
+            vec![ProcessTreeNode {
+                pid: 42,
+                ppid: Some(1),
+                name: "node".to_string(),
+            }],
+        );
+
+        let fake = CountingScanner {
+            inner,
+            batch_process_calls: RefCell::new(Vec::new()),
+            batch_cwd_calls: RefCell::new(Vec::new()),
+            process_tree_calls: RefCell::new(Vec::new()),
+        };
+
+        let detail = get_port_details_with(&fake, 3000, None).expect("detail should exist");
+
+        assert_eq!(detail.port, 3000);
+        assert_eq!(fake.batch_process_calls.borrow().as_slice(), &[vec![42]]);
+        assert_eq!(fake.batch_cwd_calls.borrow().as_slice(), &[vec![42]]);
+        assert_eq!(fake.process_tree_calls.borrow().as_slice(), &[42]);
+    }
+
+    #[test]
+    fn non_docker_ports_do_not_invoke_docker_provider() {
+        let mut fake = FakePlatformScanner {
+            listening_ports: vec![RawPortEntry {
+                port: 3000,
+                pid: 42,
+                process_name: "node".to_string(),
+            }],
+            ..Default::default()
+        };
+        fake.process_details.insert(
+            42,
+            RawProcessDetails {
+                pid: 42,
+                ppid: Some(1),
+                stat: "S".to_string(),
+                rss_kb: 2048,
+                lstart: Some("Jan 01 00:00:00 2000".to_string()),
+                command: "node server.js".to_string(),
+            },
+        );
+
+        let docker_calls = AtomicUsize::new(0);
+        let ports = enrich_port_entries_with_docker_map(
+            &fake,
+            fake.listening_ports.clone(),
+            false,
+            None,
+            || {
+                docker_calls.fetch_add(1, Ordering::SeqCst);
+                HashMap::new()
+            },
+        );
+
+        assert_eq!(ports.len(), 1);
+        assert_eq!(docker_calls.load(Ordering::SeqCst), 0);
+    }
+
+    struct CountingScanner {
+        inner: FakePlatformScanner,
+        batch_process_calls: RefCell<Vec<Vec<u32>>>,
+        batch_cwd_calls: RefCell<Vec<Vec<u32>>>,
+        process_tree_calls: RefCell<Vec<u32>>,
+    }
+
+    impl PlatformScanner for CountingScanner {
+        fn get_listening_ports_raw(&self) -> Vec<RawPortEntry> {
+            self.inner.get_listening_ports_raw()
+        }
+
+        fn batch_process_info(&self, pids: &[u32]) -> HashMap<u32, RawProcessDetails> {
+            self.batch_process_calls.borrow_mut().push(pids.to_vec());
+            self.inner.batch_process_info(pids)
+        }
+
+        fn batch_cwd(&self, pids: &[u32]) -> HashMap<u32, PathBuf> {
+            self.batch_cwd_calls.borrow_mut().push(pids.to_vec());
+            self.inner.batch_cwd(pids)
+        }
+
+        fn get_all_processes_raw(&self) -> Vec<RawProcessEntry> {
+            self.inner.get_all_processes_raw()
+        }
+
+        fn get_process_tree(&self, pid: u32) -> Vec<ProcessTreeNode> {
+            self.process_tree_calls.borrow_mut().push(pid);
+            self.inner.get_process_tree(pid)
+        }
+
+        fn pid_exists(&self, pid: u32) -> bool {
+            self.inner.pid_exists(pid)
+        }
+
+        fn kill_process(&self, pid: u32, signal: &str) -> bool {
+            self.inner.kill_process(pid, signal)
+        }
+
+        fn get_process_log_files(&self, pid: u32) -> Vec<LogFile> {
+            self.inner.get_process_log_files(pid)
+        }
+
+        fn get_system_log_command(&self, pid: u32, follow: bool) -> Option<String> {
+            self.inner.get_system_log_command(pid, follow)
+        }
+    }
+
+    fn temp_project(label: &str) -> std::path::PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "port-whisperer-{label}-{}-{nanos}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    fn project_name(path: &std::path::Path) -> String {
+        path.file_name().unwrap().to_string_lossy().to_string()
+    }
+}
