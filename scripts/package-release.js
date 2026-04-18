@@ -50,6 +50,28 @@ function ensureExists(filePath) {
   }
 }
 
+function buildArchiveCommand(target, archivePath, stageDir) {
+  if (target.extension === "tar.gz") {
+    return {
+      command: "tar",
+      args: ["-czf", archivePath, "-C", stageDir, ...target.binaries],
+    };
+  }
+
+  const sources = target.binaries
+    .map((binary) => `'${path.join(stageDir, binary).replace(/\\/g, "/")}'`)
+    .join(", ");
+  const destination = archivePath.replace(/\\/g, "/");
+  return {
+    command: "powershell",
+    args: [
+      "-NoProfile",
+      "-Command",
+      `Compress-Archive -Path ${sources} -DestinationPath '${destination}' -Force`,
+    ],
+  };
+}
+
 function main() {
   const target = TARGETS[TARGET];
   if (!target) {
@@ -72,13 +94,17 @@ function main() {
     fs.rmSync(archivePath, { force: true });
   }
 
-  if (target.extension === "tar.gz") {
-    run("tar", ["-czf", archivePath, "-C", stageDir, ...target.binaries]);
-  } else {
-    run("zip", ["-j", archivePath, ...target.binaries.map((binary) => path.join(stageDir, binary))]);
-  }
+  const archiveCommand = buildArchiveCommand(target, archivePath, stageDir);
+  run(archiveCommand.command, archiveCommand.args);
 
   console.log(archivePath);
 }
 
-main();
+if (require.main === module) {
+  main();
+}
+
+module.exports = {
+  TARGETS,
+  buildArchiveCommand,
+};
