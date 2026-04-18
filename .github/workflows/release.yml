@@ -9,8 +9,46 @@ permissions:
   contents: write
 
 jobs:
+  verify-release:
+    name: Verify release inputs
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.release-metadata.outputs.version }}
+      npm_tag: ${{ steps.release-metadata.outputs.npm_tag }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Verify release metadata
+        id: release-metadata
+        shell: bash
+        run: |
+          node scripts/verify-release.js
+          VERSION=$(node -p "require('./package.json').version")
+          NPM_TAG=$(node -e "const { resolveReleaseMetadata } = require('./scripts/release-metadata.js'); const metadata = resolveReleaseMetadata({ gitTag: process.env.GITHUB_REF_NAME, packageVersion: require('./package.json').version }); process.stdout.write(metadata.npmTag);")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "npm_tag=$NPM_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Run Rust tests
+        run: cargo test
+
+      - name: Pack npm tarball
+        run: npm pack
+
+      - name: Verify postinstall skip path
+        run: PORTS_RS_SKIP_DOWNLOAD=1 node scripts/postinstall.js
+
   build:
     name: Build ${{ matrix.target }}
+    needs: verify-release
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -52,22 +90,62 @@ jobs:
 
   publish-release:
     name: Publish GitHub Release
-    needs: build
+    needs:
+      - verify-release
+      - build
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Download all packaged assets
         uses: actions/download-artifact@v4
         with:
           path: release-assets
 
       - name: Flatten release assets
+        shell: bash
         run: |
           mkdir -p dist
           find release-assets -type f -exec cp {} dist/ \;
           ls -l dist
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Verify packaged release assets
+        run: VERIFY_RELEASE_DIST=1 node scripts/verify-release.js
+
       - name: Publish release assets
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*
+
+  publish-npm:
+    name: Publish npm package
+    needs:
+      - verify-release
+      - publish-release
+    runs-on: ubuntu-latest
+    environment: npm-publish
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+
+      - name: Publish package
+        run: npm publish --tag "${{ needs.verify-release.outputs.npm_tag }}"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Verify npm metadata
+        run: npm view ports-rs version dist-tags

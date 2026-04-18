@@ -4,33 +4,11 @@ const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
 const { spawnSync } = require("node:child_process");
+const { RELEASE_TARGETS } = require("./release-targets.js");
 
 const ROOT = path.resolve(__dirname, "..");
 const DIST = path.join(ROOT, "dist");
 const TARGET = process.argv[2] || `${process.platform}-${process.arch}`;
-
-const TARGETS = {
-  "darwin-arm64": {
-    archive: "ports-rs-darwin-arm64.tar.gz",
-    binaries: ["ports", "whoisonport"],
-    extension: "tar.gz"
-  },
-  "darwin-x64": {
-    archive: "ports-rs-darwin-x64.tar.gz",
-    binaries: ["ports", "whoisonport"],
-    extension: "tar.gz"
-  },
-  "linux-x64": {
-    archive: "ports-rs-linux-x64.tar.gz",
-    binaries: ["ports", "whoisonport"],
-    extension: "tar.gz"
-  },
-  "win32-x64": {
-    archive: "ports-rs-windows-x64.zip",
-    binaries: ["ports.exe", "whoisonport.exe"],
-    extension: "zip"
-  }
-};
 
 function fail(message) {
   console.error(`package-release: ${message}`);
@@ -51,7 +29,7 @@ function ensureExists(filePath) {
 }
 
 function buildArchiveCommand(target, archivePath, stageDir) {
-  if (target.extension === "tar.gz") {
+  if (target.archiveType === "tar.gz") {
     return {
       command: "tar",
       args: ["-czf", archivePath, "-C", stageDir, ...target.binaries],
@@ -73,7 +51,7 @@ function buildArchiveCommand(target, archivePath, stageDir) {
 }
 
 function main() {
-  const target = TARGETS[TARGET];
+  const target = RELEASE_TARGETS[TARGET];
   if (!target) {
     fail(`unsupported packaging target ${TARGET}`);
   }
@@ -105,6 +83,6 @@ if (require.main === module) {
 }
 
 module.exports = {
-  TARGETS,
+  TARGETS: RELEASE_TARGETS,
   buildArchiveCommand,
 };

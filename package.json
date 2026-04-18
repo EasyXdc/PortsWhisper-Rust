@@ -21,7 +21,8 @@
     "README.zh-CN.md"
   ],
   "scripts": {
-    "postinstall": "node scripts/postinstall.js"
+    "postinstall": "node scripts/postinstall.js",
+    "verify:release": "node scripts/verify-release.js"
   },
   "engines": {
     "node": ">=18"

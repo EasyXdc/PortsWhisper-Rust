@@ -1,13 +1,11 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const {
-  buildArchiveCommand,
-  TARGETS,
-} = require("../scripts/package-release.js");
+const { buildArchiveCommand } = require("../scripts/package-release.js");
+const { RELEASE_TARGETS } = require("../scripts/release-targets.js");
 
 test("win32-x64 packaging uses powershell compress-archive", () => {
-  const target = TARGETS["win32-x64"];
+  const target = RELEASE_TARGETS["win32-x64"];
   const archivePath = "C:/tmp/ports-rs-windows-x64.zip";
   const stageDir = "C:/tmp/stage";
 
@@ -21,7 +19,7 @@ test("win32-x64 packaging uses powershell compress-archive", () => {
 });
 
 test("unix packaging uses tar gz command", () => {
-  const target = TARGETS["darwin-arm64"];
+  const target = RELEASE_TARGETS["darwin-arm64"];
   const archivePath = "/tmp/ports-rs-darwin-arm64.tar.gz";
   const stageDir = "/tmp/stage";
 

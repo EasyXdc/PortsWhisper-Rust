@@ -156,37 +156,23 @@ If any asset is missing, incorrectly named, or contains the wrong files, stop an
 
 ---
 
-## 5. Publish npm Manually
+## 5. Approve npm Publish in GitHub Actions
 
-The first version of the workflow does **not** publish npm automatically.
+The workflow does not publish to npm until a maintainer approves the `npm-publish` environment.
 
-Once GitHub Release assets are confirmed, publish npm manually.
+### 5.1 Open the release workflow run
 
-### 5.1 Log in if needed
+- open the Actions run triggered by the tag
+- confirm `verify-release` passed
+- confirm `publish-release` passed
 
-```bash
-npm whoami
-```
+### 5.2 Approve the environment
 
-If that fails, log in first:
+- open the pending `publish-npm` job
+- review the target dist-tag
+- approve the `npm-publish` environment
 
-```bash
-npm login
-```
-
-### 5.2 Publish the beta package
-
-```bash
-npm publish --tag next
-```
-
-This should publish:
-
-- package name: `ports-rs`
-- version: `0.1.0-beta.1`
-- dist-tag: `next`
-
-### 5.3 Verify npm metadata
+### 5.3 Verify publish results
 
 ```bash
 npm view ports-rs version dist-tags
@@ -258,6 +244,13 @@ ports kill 3000
 - inspect the failed Actions job
 - fix the workflow or packaging script
 - delete the bad tag if needed
+
+### npm publish failed after approval
+
+- check the `publish-npm` job logs
+- verify the environment secret `NPM_TOKEN` is still valid
+- run `npm view ports-rs version dist-tags` to confirm whether npm published anything
+- if the publish did not succeed, fix the cause and release a new version instead of trying to overwrite the same package version
 - re-tag and re-push
 
 ### npm publish failed
