@@ -1,10 +1,6 @@
 # Port Whisperer
 
 <p align="center">
-  <a href="./README.md">🌍 English Documentation: README.md</a>
-</p>
-
-<p align="center">
   <img src="./assets/hero.svg" alt="Port Whisperer Hero" width="100%" />
 </p>
 
@@ -16,6 +12,10 @@
   <img src="https://img.shields.io/badge/CLI-Rust-0f172a?style=for-the-badge&logo=rust" alt="Rust CLI" />
   <img src="https://img.shields.io/badge/npm-ports--rs-CB3837?style=for-the-badge&logo=npm" alt="npm package" />
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-2563eb?style=for-the-badge" alt="Platform support" />
+</p>
+
+<p align="center">
+  <a href="./README.md">🌍 English Documentation: README.md</a>
 </p>
 
 ## ✨ 它能做什么
