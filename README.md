@@ -215,9 +215,6 @@ Press `Ctrl+C` to stop.
 
 ## 📊 Performance
 
-<p align="center">
-  <img src="./assets/performance-chart.svg" alt="Performance comparison chart" width="100%" />
-</p>
 
 Fresh local measurements used in the chart:
 
