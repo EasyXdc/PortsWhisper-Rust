@@ -2,6 +2,10 @@
 
 This checklist is for publishing `port-whisperer-rust` release assets and then following up with the `ports-rs` npm package.
 
+For the full first beta release procedure, see:
+
+- `docs/first-beta-release-runbook.md`
+
 ## 1. Preflight
 
 - Run `cargo test`
