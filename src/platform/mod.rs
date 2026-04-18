@@ -13,9 +13,17 @@ pub mod macos;
 #[cfg(target_os = "windows")]
 pub mod windows;
 
-pub trait PlatformScanner {
+pub trait PlatformScanner: Sync {
     fn get_listening_ports_raw(&self) -> Vec<RawPortEntry>;
+    fn get_listening_port_raw(&self, port: u16) -> Option<RawPortEntry> {
+        self.get_listening_ports_raw()
+            .into_iter()
+            .find(|entry| entry.port == port)
+    }
     fn batch_process_info(&self, pids: &[u32]) -> HashMap<u32, RawProcessDetails>;
+    fn get_process_details(&self, pid: u32) -> Option<RawProcessDetails> {
+        self.batch_process_info(&[pid]).remove(&pid)
+    }
     fn batch_cwd(&self, pids: &[u32]) -> HashMap<u32, PathBuf>;
     fn get_all_processes_raw(&self) -> Vec<RawProcessEntry>;
     fn get_process_tree(&self, pid: u32) -> Vec<ProcessTreeNode>;
@@ -111,8 +119,13 @@ impl PlatformScanner for UnsupportedScanner {
 }
 
 fn darwin_listening_ports_raw() -> Vec<RawPortEntry> {
-    let raw =
-        run_output("lsof", ["-iTCP", "-sTCP:LISTEN", "-P", "-n"], Some(10_000)).unwrap_or_default();
+    darwin_listening_ports_from_output(
+        run_output("lsof", ["-iTCP", "-sTCP:LISTEN", "-P", "-n"], Some(10_000)).unwrap_or_default(),
+    )
+}
+
+fn darwin_listening_ports_from_output(raw: String) -> Vec<RawPortEntry> {
+    let raw = raw;
     let mut entries = Vec::new();
     let mut seen = HashMap::new();
     for line in raw.lines().skip(1) {
@@ -139,8 +152,25 @@ fn darwin_listening_ports_raw() -> Vec<RawPortEntry> {
     entries
 }
 
+fn darwin_listening_port_raw(port: u16) -> Option<RawPortEntry> {
+    darwin_listening_ports_from_output(
+        run_output(
+            "lsof",
+            [&format!("-iTCP:{port}"), "-sTCP:LISTEN", "-P", "-n"],
+            Some(10_000),
+        )
+        .unwrap_or_default(),
+    )
+    .into_iter()
+    .find(|entry| entry.port == port)
+}
+
 #[cfg(target_os = "linux")]
 fn linux_listening_ports_raw() -> Vec<RawPortEntry> {
+    let proc_entries = linux_listening_ports_from_procfs();
+    if !proc_entries.is_empty() {
+        return proc_entries;
+    }
     let mut entries = Vec::new();
     let mut seen = HashMap::new();
     if command_exists("ss") {
@@ -206,6 +236,109 @@ fn linux_listening_ports_raw() -> Vec<RawPortEntry> {
         }
     }
     entries
+}
+
+#[cfg(target_os = "linux")]
+fn linux_listening_ports_from_procfs() -> Vec<RawPortEntry> {
+    let tcp = std::fs::read_to_string("/proc/net/tcp").ok();
+    let tcp6 = std::fs::read_to_string("/proc/net/tcp6").ok();
+    let pids = std::fs::read_dir("/proc")
+        .ok()
+        .into_iter()
+        .flat_map(|entries| entries.filter_map(Result::ok))
+        .filter_map(|entry| entry.file_name().to_string_lossy().parse::<u32>().ok())
+        .collect::<Vec<_>>();
+    linux_listening_ports_from_proc(tcp, tcp6, &pids, linux_pid_socket_inodes)
+}
+
+#[cfg(any(test, target_os = "linux"))]
+fn linux_listening_ports_from_proc<Lookup>(
+    tcp: Option<String>,
+    tcp6: Option<String>,
+    pids: &[u32],
+    inode_lookup: Lookup,
+) -> Vec<RawPortEntry>
+where
+    Lookup: Fn(u32) -> Option<Vec<(u64, String)>>,
+{
+    let inode_ports = parse_linux_proc_net_tcp(&tcp)
+        .into_iter()
+        .chain(parse_linux_proc_net_tcp(&tcp6))
+        .collect::<HashMap<_, _>>();
+    if inode_ports.is_empty() {
+        return Vec::new();
+    }
+
+    let mut seen = HashMap::new();
+    let mut entries = Vec::new();
+    for pid in pids {
+        let Some(inodes) = inode_lookup(*pid) else {
+            continue;
+        };
+        for (inode, process_name) in inodes {
+            let Some(port) = inode_ports.get(&inode) else {
+                continue;
+            };
+            if seen.contains_key(port) {
+                continue;
+            }
+            seen.insert(*port, true);
+            entries.push(RawPortEntry {
+                port: *port,
+                pid: *pid,
+                process_name,
+            });
+        }
+    }
+    entries.sort_by_key(|entry| entry.port);
+    entries
+}
+
+#[cfg(any(test, target_os = "linux"))]
+fn parse_linux_proc_net_tcp(raw: &Option<String>) -> HashMap<u64, u16> {
+    let Some(raw) = raw else {
+        return HashMap::new();
+    };
+    let mut out = HashMap::new();
+    for line in raw.lines().skip(1) {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() < 10 || parts[3] != "0A" {
+            continue;
+        }
+        let Some((_, hex_port)) = parts[1].rsplit_once(':') else {
+            continue;
+        };
+        let Ok(port) = u16::from_str_radix(hex_port, 16) else {
+            continue;
+        };
+        let Ok(inode) = parts[9].parse::<u64>() else {
+            continue;
+        };
+        out.insert(inode, port);
+    }
+    out
+}
+
+#[cfg(target_os = "linux")]
+fn linux_pid_socket_inodes(pid: u32) -> Option<Vec<(u64, String)>> {
+    let fd_dir = std::fs::read_dir(format!("/proc/{pid}/fd")).ok()?;
+    let process_name = linux_proc_name(pid);
+    let mut out = Vec::new();
+    for entry in fd_dir.filter_map(Result::ok) {
+        let target = std::fs::read_link(entry.path()).ok()?;
+        let label = target.to_string_lossy();
+        let Some(inode_text) = label
+            .strip_prefix("socket:[")
+            .and_then(|value| value.strip_suffix(']'))
+        else {
+            continue;
+        };
+        let Ok(inode) = inode_text.parse::<u64>() else {
+            continue;
+        };
+        out.push((inode, process_name.clone()));
+    }
+    Some(out)
 }
 
 #[cfg(target_os = "windows")]
@@ -278,6 +411,21 @@ fn unix_batch_process_info(pids: &[u32]) -> HashMap<u32, RawProcessDetails> {
         }
     }
     map
+}
+
+fn unix_process_details(pid: u32) -> Option<RawProcessDetails> {
+    let raw = run_output(
+        "ps",
+        [
+            "-p",
+            &pid.to_string(),
+            "-o",
+            "pid=,ppid=,stat=,rss=,lstart=,command=",
+        ],
+        Some(5000),
+    )?;
+    raw.lines()
+        .find_map(|line| parse_unix_ps_details(line).map(|(_, details)| details))
 }
 
 #[cfg(target_os = "windows")]
@@ -417,34 +565,44 @@ fn windows_all_processes_raw() -> Vec<RawProcessEntry> {
 }
 
 fn unix_process_tree(pid: u32) -> Vec<ProcessTreeNode> {
-    let raw = run_output("ps", ["-eo", "pid=,ppid=,comm="], Some(5000)).unwrap_or_default();
-    let mut processes = HashMap::new();
-    for line in raw.lines() {
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() < 3 {
-            continue;
-        }
-        let Ok(p) = parts[0].parse::<u32>() else {
-            continue;
-        };
-        let ppid = parts[1].parse::<u32>().ok();
-        processes.insert(
-            p,
-            ProcessTreeNode {
-                pid: p,
-                ppid,
-                name: parts[2..].join(" "),
-            },
-        );
-    }
+    unix_process_tree_with(pid, |target_pid| {
+        run_output(
+            "ps",
+            ["-p", &target_pid.to_string(), "-o", "pid=,ppid=,comm="],
+            Some(5000),
+        )
+    })
+}
+
+fn unix_process_tree_with<Lookup>(pid: u32, lookup: Lookup) -> Vec<ProcessTreeNode>
+where
+    Lookup: Fn(u32) -> Option<String>,
+{
     let mut tree = Vec::new();
     let mut current = pid;
     for _ in 0..8 {
         if current <= 1 {
             break;
         }
-        let Some(node) = processes.get(&current).cloned() else {
+        let Some(raw) = lookup(current) else {
             break;
+        };
+        let line = raw
+            .lines()
+            .find(|line| !line.trim().is_empty())
+            .unwrap_or("");
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() < 3 {
+            break;
+        }
+        let Ok(pid) = parts[0].parse::<u32>() else {
+            break;
+        };
+        let ppid = parts[1].parse::<u32>().ok();
+        let node = ProcessTreeNode {
+            pid,
+            ppid,
+            name: parts[2..].join(" "),
         };
         current = node.ppid.unwrap_or(0);
         tree.push(node);
@@ -612,6 +770,7 @@ mod tests {
     use super::windows_process_name_with;
     #[cfg(target_os = "linux")]
     use super::{linux_batch_cwd_with, linux_proc_details_with};
+    use super::{linux_listening_ports_from_proc, unix_process_tree_with};
     #[cfg(target_os = "linux")]
     use crate::model::RawProcessDetails;
     #[cfg(target_os = "linux")]
@@ -641,6 +800,37 @@ mod tests {
         assert_eq!(details.command, "unknown");
         assert_eq!(details.rss_kb, 0);
         assert_eq!(details.ppid, None);
+    }
+
+    #[test]
+    fn linux_proc_socket_inode_mapping_can_build_listener_entries() {
+        let tcp = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n   0: 0100007F:0BB8 00000000:0000 0A 00000000:00000000 00:00000000 00000000  100        0 12345 1 0000000000000000 100 0 0 10 0\n";
+
+        let entries = linux_listening_ports_from_proc(Some(tcp.to_string()), None, &[42], |pid| {
+            Some(vec![(12345, "node".to_string())]).filter(|_| pid == 42)
+        });
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].port, 3000);
+        assert_eq!(entries[0].pid, 42);
+        assert_eq!(entries[0].process_name, "node");
+    }
+
+    #[test]
+    fn unix_process_tree_can_follow_parent_chain_with_targeted_queries() {
+        let tree = unix_process_tree_with(42, |pid| match pid {
+            42 => Some("42 7 node".to_string()),
+            7 => Some("7 1 launchd".to_string()),
+            _ => None,
+        });
+
+        assert_eq!(tree.len(), 2);
+        assert_eq!(tree[0].pid, 42);
+        assert_eq!(tree[0].ppid, Some(7));
+        assert_eq!(tree[0].name, "node");
+        assert_eq!(tree[1].pid, 7);
+        assert_eq!(tree[1].ppid, Some(1));
+        assert_eq!(tree[1].name, "launchd");
     }
 
     #[cfg(target_os = "windows")]

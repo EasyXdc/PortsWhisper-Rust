@@ -17,6 +17,10 @@ pub fn get_all_processes() -> Vec<ProcessInfo> {
     crate::process::get_all_processes()
 }
 
+pub fn get_all_dev_processes() -> Vec<ProcessInfo> {
+    crate::process::get_all_dev_processes()
+}
+
 pub fn find_orphaned_processes() -> Vec<PortInfo> {
     crate::process::find_orphaned_processes()
 }

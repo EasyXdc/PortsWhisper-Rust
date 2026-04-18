@@ -1,5 +1,10 @@
-use super::{darwin_batch_cwd, darwin_listening_ports_raw, unix_all_processes_raw};
-use super::{unix_batch_process_info, unix_pid_exists, unix_process_tree, PlatformScanner};
+use super::{
+    darwin_batch_cwd, darwin_listening_port_raw, darwin_listening_ports_raw, unix_all_processes_raw,
+};
+use super::{
+    unix_batch_process_info, unix_pid_exists, unix_process_details, unix_process_tree,
+    PlatformScanner,
+};
 use crate::kill;
 use crate::logs;
 use crate::model::{LogFile, ProcessTreeNode, RawPortEntry, RawProcessDetails, RawProcessEntry};
@@ -13,8 +18,16 @@ impl PlatformScanner for MacosScanner {
         darwin_listening_ports_raw()
     }
 
+    fn get_listening_port_raw(&self, port: u16) -> Option<RawPortEntry> {
+        darwin_listening_port_raw(port)
+    }
+
     fn batch_process_info(&self, pids: &[u32]) -> HashMap<u32, RawProcessDetails> {
         unix_batch_process_info(pids)
+    }
+
+    fn get_process_details(&self, pid: u32) -> Option<RawProcessDetails> {
+        unix_process_details(pid)
     }
 
     fn batch_cwd(&self, pids: &[u32]) -> HashMap<u32, PathBuf> {

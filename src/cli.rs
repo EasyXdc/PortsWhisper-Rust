@@ -42,9 +42,12 @@ pub fn run(_binary_name: &str, args: Vec<String>) -> i32 {
             0
         }
         CliCommand::Ps => {
-            let mut processes = scanner::get_all_processes();
+            let mut processes = if parsed.show_all {
+                scanner::get_all_processes()
+            } else {
+                scanner::get_all_dev_processes()
+            };
             if !parsed.show_all {
-                processes.retain(|p| scanner::is_dev_process(&p.process_name, &p.command));
                 let docker: Vec<_> = processes
                     .iter()
                     .filter(|p| scanner::is_docker_process(&p.process_name))
@@ -153,8 +156,8 @@ fn run_port_detail(port: u32) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        CliCommand, ParsedCli, apply_clean_answer, clean_confirmation_prompt, detail_kill_prompt,
-        parse_args, run_clean_with, unknown_command_lines,
+        apply_clean_answer, clean_confirmation_prompt, detail_kill_prompt, parse_args,
+        run_clean_with, unknown_command_lines, CliCommand, ParsedCli,
     };
     use crate::model::{PortInfo, ProcessStatus};
     use std::cell::RefCell;

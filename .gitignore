@@ -1,1 +1,9 @@
-/target
+.DS_Store
+target/
+dist/
+vendor/*
+!vendor/.gitkeep
+*.tgz
+*.tar.gz
+*.zip
+npm-debug.log*

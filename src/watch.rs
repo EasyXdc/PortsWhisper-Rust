@@ -223,7 +223,7 @@ fn install_sigint_handler() {
 #[cfg(test)]
 mod tests {
     use super::{
-        DockerWatchCache, WatchEvent, diff_watch_events, refresh_watch_state_with, run_watch_loop,
+        diff_watch_events, refresh_watch_state_with, run_watch_loop, DockerWatchCache, WatchEvent,
     };
     use crate::model::{
         DockerInfo, LogFile, PortInfo, ProcessStatus, ProcessTreeNode, RawPortEntry,
@@ -235,6 +235,7 @@ mod tests {
     use std::collections::HashMap;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::Mutex;
 
     #[test]
     fn watch_diff_detects_new_and_removed_without_sleeping() {
@@ -289,8 +290,8 @@ mod tests {
 
         let fake = CountingScanner {
             inner,
-            batch_calls: RefCell::new(Vec::new()),
-            cwd_calls: RefCell::new(Vec::new()),
+            batch_calls: Mutex::new(Vec::new()),
+            cwd_calls: Mutex::new(Vec::new()),
         };
 
         let previous = HashMap::from([(3000, port_with_pid(3000, 30))]);
@@ -301,8 +302,8 @@ mod tests {
 
         assert_eq!(events.len(), 1);
         assert!(matches!(&events[0], WatchEvent::New(info) if info.port == 4000));
-        assert_eq!(fake.batch_calls.borrow().as_slice(), &[vec![40]]);
-        assert_eq!(fake.cwd_calls.borrow().as_slice(), &[vec![40]]);
+        assert_eq!(fake.batch_calls.lock().unwrap().as_slice(), &[vec![40]]);
+        assert_eq!(fake.cwd_calls.lock().unwrap().as_slice(), &[vec![40]]);
         assert_eq!(
             current.get(&3000).expect("unchanged port kept").command,
             "node server.js"
@@ -333,8 +334,8 @@ mod tests {
 
         let fake = CountingScanner {
             inner,
-            batch_calls: RefCell::new(Vec::new()),
-            cwd_calls: RefCell::new(Vec::new()),
+            batch_calls: Mutex::new(Vec::new()),
+            cwd_calls: Mutex::new(Vec::new()),
         };
 
         let previous = HashMap::from([(3000, port_with_pid(3000, 30))]);
@@ -344,7 +345,7 @@ mod tests {
             });
 
         assert!(events.is_empty());
-        assert_eq!(fake.batch_calls.borrow().as_slice(), &[vec![31]]);
+        assert_eq!(fake.batch_calls.lock().unwrap().as_slice(), &[vec![31]]);
         assert_eq!(current.get(&3000).expect("changed pid refreshed").pid, 31);
         assert_eq!(
             current.get(&3000).expect("changed pid refreshed").command,
@@ -386,8 +387,8 @@ mod tests {
 
         let fake = CountingScanner {
             inner,
-            batch_calls: RefCell::new(Vec::new()),
-            cwd_calls: RefCell::new(Vec::new()),
+            batch_calls: Mutex::new(Vec::new()),
+            cwd_calls: Mutex::new(Vec::new()),
         };
         let previous = HashMap::from([(5432, docker_port_with_pid(5432, 99))]);
         let cache = DockerWatchCache {
@@ -444,8 +445,8 @@ mod tests {
 
     struct CountingScanner {
         inner: FakePlatformScanner,
-        batch_calls: RefCell<Vec<Vec<u32>>>,
-        cwd_calls: RefCell<Vec<Vec<u32>>>,
+        batch_calls: Mutex<Vec<Vec<u32>>>,
+        cwd_calls: Mutex<Vec<Vec<u32>>>,
     }
 
     impl PlatformScanner for CountingScanner {
@@ -454,12 +455,12 @@ mod tests {
         }
 
         fn batch_process_info(&self, pids: &[u32]) -> HashMap<u32, RawProcessDetails> {
-            self.batch_calls.borrow_mut().push(pids.to_vec());
+            self.batch_calls.lock().unwrap().push(pids.to_vec());
             self.inner.batch_process_info(pids)
         }
 
         fn batch_cwd(&self, pids: &[u32]) -> HashMap<u32, PathBuf> {
-            self.cwd_calls.borrow_mut().push(pids.to_vec());
+            self.cwd_calls.lock().unwrap().push(pids.to_vec());
             self.inner.batch_cwd(pids)
         }
 

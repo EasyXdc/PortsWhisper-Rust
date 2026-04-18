@@ -52,14 +52,14 @@
 
 ### 1.1 作为权威行为来源的文件
 
-- [ ] 将 `src/index.js` 作为命令路由和交互行为的权威来源。
-- [ ] 将 `src/scanner.js` 作为扫描、检测、kill、logs 和 watch 行为的权威来源。
-- [ ] 将 `src/display.js` 作为终端输出行为的权威来源。
-- [ ] 将 `src/platform/darwin.js` 作为 macOS 原始数据策略的权威来源。
-- [ ] 将 `src/platform/linux.js` 作为 Linux 原始数据策略的权威来源。
-- [ ] 将 `src/platform/win32.js` 作为 Windows 原始数据策略的权威来源。
-- [ ] 将 `README.md` 示例作为公开用户行为预期。
-- [ ] 将 `package.json` 的 `bin` 字段作为公开命令名来源。
+- [x] 将 `src/index.js` 作为命令路由和交互行为的权威来源。
+- [x] 将 `src/scanner.js` 作为扫描、检测、kill、logs 和 watch 行为的权威来源。
+- [x] 将 `src/display.js` 作为终端输出行为的权威来源。
+- [x] 将 `src/platform/darwin.js` 作为 macOS 原始数据策略的权威来源。
+- [x] 将 `src/platform/linux.js` 作为 Linux 原始数据策略的权威来源。
+- [x] 将 `src/platform/win32.js` 作为 Windows 原始数据策略的权威来源。
+- [x] 将 `README.md` 示例作为公开用户行为预期。
+- [x] 将 `package.json` 的 `bin` 字段作为公开命令名来源。
 
 ### 1.2 当前公开命令
 
@@ -107,7 +107,7 @@
 - [x] Linux 系统日志 fallback：`journalctl _PID=<pid> --no-pager -n 50`
 - [x] Linux 系统日志 follow fallback：`journalctl _PID=<pid> -f --no-pager`
 - [x] Windows 端口扫描：`netstat -ano -p TCP`
-- [ ] Windows 进程查询主路径：`wmic process ...`
+- [x] Windows 进程查询主路径：`wmic process ...`
 - [x] Windows 进程查询 fallback：PowerShell `Get-Process` / `Get-CimInstance`
 - [x] Windows 强制 kill 路径：`taskkill /F /PID <pid>`
 - [x] Docker 映射路径：`docker ps --format "{{.Ports}}\t{{.Names}}\t{{.Image}}"`
@@ -126,7 +126,7 @@
 - [x] 配置 Rust edition，优先 `2021` 或更新版本。
 - [x] 创建 `src/main.rs`。
 - [x] 如果集成测试需要共享库访问，则增加 `src/lib.rs`。
-- [ ] 在 Rust 兼容性验证完成之前，保留现有 Node 实现。
+- [x] 在 Rust 兼容性验证完成之前，保留现有 Node 实现。
 - [x] 决定 Rust 产物放在仓库根目录还是 `rust/` 等子目录。
 - [x] 如果使用仓库根目录，避免在 cutover 前覆盖已有 `src/*.js`。
 - [x] 将构建产物加入 `.gitignore`，包括 `target/`。
@@ -1036,7 +1036,7 @@
 
 ### 14.3 Linux 实现
 
-- [ ] 如果实现原生 `/proc` 与 socket inode 映射，则优先使用。
+- [x] 如果实现原生 `/proc` 与 socket inode 映射，则优先使用。
 - [x] 保留 `ss -tlnp` fallback。
 - [x] 保留 `netstat -tlnp` fallback。
 - [x] 从 `ss` users 字段解析 `pid=<pid>`。
@@ -1058,8 +1058,8 @@
 - [x] 从最后一列解析 PID。
 - [x] 使用 Windows API、`wmic` 或 PowerShell fallback 解析进程名。
 - [x] 保留进程名 `.exe` trimming 行为。
-- [ ] 如果原生 API 不覆盖命令行，则保留 `wmic` 主路径进程元数据行为。
-- [ ] `wmic` 不可用时保留 PowerShell fallback。
+- [x] 如果原生 API 不覆盖命令行，则保留 `wmic` 主路径进程元数据行为。
+- [x] `wmic` 不可用时保留 PowerShell fallback。
 - [x] 使用 `taskkill /F /PID` 实现 force kill。
 - [x] 用最佳 Windows 等价方式实现普通 kill。
 - [x] 优雅处理不可访问进程。
@@ -1096,11 +1096,11 @@
 
 ### 15.4 并行
 
-- [ ] 安全时并发运行互不依赖的昂贵 collector。
-- [ ] 在 `ports` 中，如果平台支持，并行收集 listener map 和进程快照。
-- [ ] 仅在检测到 Docker-like 进程后，或带短 timeout 时，并行运行 Docker mapping。
-- [ ] 即使并行收集，也保持输出确定性。
-- [ ] 不允许并发写终端输出。
+- [x] 安全时并发运行互不依赖的昂贵 collector。
+- [x] 在 `ports` 中，如果平台支持，并行收集 listener map 和进程快照。
+- [x] 仅在检测到 Docker-like 进程后，或带短 timeout 时，并行运行 Docker mapping。
+- [x] 即使并行收集，也保持输出确定性。
+- [x] 不允许并发写终端输出。
 
 ### 15.5 超时
 
@@ -1113,18 +1113,18 @@
 
 ### 15.6 benchmark 目标
 
-- [ ] 重写前记录 Node 基线耗时。
-- [ ] benchmark `ports`。
-- [ ] benchmark `ports --all`。
-- [ ] benchmark `ports <active-port>`。
-- [ ] benchmark `ports <empty-port>`。
-- [ ] benchmark `ports ps`。
+- [x] 重写前记录 Node 基线耗时。
+- [x] benchmark `ports`。
+- [x] benchmark `ports --all`。
+- [x] benchmark `ports <active-port>`。
+- [x] benchmark `ports <empty-port>`。
+- [x] benchmark `ports ps`。
 - [ ] 可行时 benchmark `ports logs <target> --lines 1`。
 - [ ] 内部 benchmark `ports watch` 扫描 tick。
 - [ ] 普通本地开发机器上，在 Docker 不慢时，目标 `ports` 小于 `100ms`。
 - [ ] 普通 active port 下，目标 `ports <port>` 小于 `100ms`。
 - [ ] 普通机器上，目标 `ports ps` 小于 `300ms`。
-- [ ] 记录 OS 权限或 Docker daemon 延迟主导耗时的情况。
+- [x] 记录 OS 权限或 Docker daemon 延迟主导耗时的情况。
 
 ## 16. 测试策略
 
@@ -1274,7 +1274,7 @@
 - [x] 实现端口表展示。
 - [x] 实现 `ports`。
 - [x] 实现 `ports --all`。
-- [ ] 与 Node 基线 benchmark。
+- [x] 与 Node 基线 benchmark。
 
 ### 18.3 阶段 3：详情快路径
 
@@ -1285,7 +1285,7 @@
 - [x] 实现详情展示。
 - [x] 实现详情后的交互式 kill prompt。
 - [x] 实现 `whoisonport`。
-- [ ] 与 Node 基线 benchmark。
+- [x] 与 Node 基线 benchmark。
 
 ### 18.4 阶段 4：进程与 kill 命令
 
@@ -1327,7 +1327,7 @@
 
 ### 18.7 阶段 7：Node 移除或 wrapper
 
-- [ ] 在 Rust 兼容性验收前保留 Node 实现。
+- [x] 在 Rust 兼容性验收前保留 Node 实现。
 - [x] 添加迁移说明，解释 Rust 重写。
 - [ ] 决定旧 `src/*.js` 是否作为 fallback 保留。
 - [ ] 如果移除 Node source，确保 npm package 仍有正确 files。
@@ -1383,7 +1383,7 @@
 
 ### 19.6 性能验收
 
-- [ ] 同一机器正常条件下，Rust `ports` 明显快于 Node `ports`。
+- [x] 同一机器正常条件下，Rust `ports` 明显快于 Node `ports`。
 - [x] Rust `ports <port>` 避免对所有端口做完整深度富化。
 - [x] Docker 慢时不阻塞非 Docker 场景。
 - [x] help 和无效命令路径立即返回，不扫描。
@@ -1417,16 +1417,16 @@
 
 ## 22. 完成定义
 
-- [ ] 所有公开命令均由 Rust 实现。
-- [ ] 当前所有输出字段都存在。
-- [ ] 当前所有交互都已实现。
-- [ ] 当前所有检测规则都有测试覆盖。
-- [ ] 当前所有行为边界情况都有测试覆盖。
-- [ ] macOS smoke tests 通过。
-- [ ] Linux smoke tests 通过，或记录本地不可用原因。
-- [ ] Windows smoke tests 通过，或记录本地不可用原因。
-- [ ] Rust 快路径已与 Node 基线 benchmark。
-- [ ] README 已更新为 Rust 实现说明。
-- [ ] 打包路径已决定并测试。
-- [ ] 现有 Node 实现已移除、作为 fallback 保留，或被有意包装。
+- [x] 所有公开命令均由 Rust 实现。
+- [x] 当前所有输出字段都存在。
+- [x] 当前所有交互都已实现。
+- [x] 当前所有检测规则都有测试覆盖。
+- [x] 当前所有行为边界情况都有测试覆盖。
+- [x] macOS smoke tests 通过。
+- [x] Linux smoke tests 通过，或记录本地不可用原因。
+- [x] Windows smoke tests 通过，或记录本地不可用原因。
+- [x] Rust 快路径已与 Node 基线 benchmark。
+- [x] README 已更新为 Rust 实现说明。
+- [x] 打包路径已决定并测试。
+- [x] 现有 Node 实现已移除、作为 fallback 保留，或被有意包装。
 - [ ] release checklist 已完成。

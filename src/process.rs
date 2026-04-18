@@ -13,16 +13,40 @@ pub fn get_all_processes() -> Vec<ProcessInfo> {
     get_all_processes_with(platform::native_scanner())
 }
 
+pub fn get_all_dev_processes() -> Vec<ProcessInfo> {
+    get_all_dev_processes_with(platform::native_scanner())
+}
+
 pub(crate) fn get_all_processes_with(scanner: &dyn PlatformScanner) -> Vec<ProcessInfo> {
+    get_processes_with(scanner, false)
+}
+
+pub(crate) fn get_all_dev_processes_with(scanner: &dyn PlatformScanner) -> Vec<ProcessInfo> {
+    get_processes_with(scanner, true)
+}
+
+fn get_processes_with(scanner: &dyn PlatformScanner, dev_only: bool) -> Vec<ProcessInfo> {
     let entries = scanner.get_all_processes_raw();
-    let non_docker_pids: Vec<u32> = entries
+    let filtered_entries: Vec<RawProcessEntry> = if dev_only {
+        entries
+            .into_iter()
+            .filter(|e| is_dev_process(&e.process_name, &e.command))
+            .collect()
+    } else {
+        entries
+    };
+    let non_docker_pids: Vec<u32> = filtered_entries
         .iter()
-        .filter(|e| !is_docker_process(&e.process_name))
+        .filter(|e| {
+            !is_docker_process(&e.process_name)
+                && (detect_framework_from_command(&e.command, &e.process_name).is_some()
+                    || is_dev_process(&e.process_name, &e.command))
+        })
         .map(|e| e.pid)
         .collect();
     let cwd_map = scanner.batch_cwd(&non_docker_pids);
     let processes = enrich_process_entries_with_detectors(
-        entries,
+        filtered_entries,
         &cwd_map,
         find_project_root,
         detect_framework,
@@ -154,14 +178,21 @@ pub fn keep_dev_process(info: &ProcessInfo) -> bool {
 mod tests {
     use super::{
         build_process_index, enrich_process_entries_with_detectors, find_orphaned_processes_with,
-        get_all_processes_with, keep_dev_process, resolve_kill_target_with,
+        get_all_dev_processes_with, get_all_processes_with, keep_dev_process,
+        resolve_kill_target_with,
     };
     use crate::framework::detect_framework;
-    use crate::model::{KillResolutionKind, PortInfo, ProcessStatus, RawProcessEntry};
+    use crate::model::{
+        KillResolutionKind, LogFile, PortInfo, ProcessStatus, ProcessTreeNode, RawPortEntry,
+        RawProcessDetails, RawProcessEntry,
+    };
+    use crate::platform::PlatformScanner;
     use crate::test_support::FakePlatformScanner;
     use crate::util::find_project_root;
     use std::fs;
+    use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
@@ -377,6 +408,77 @@ mod tests {
         assert_eq!(orphaned[1].port, 3002);
     }
 
+    #[test]
+    fn process_list_only_requests_cwd_for_processes_that_need_project_enrichment() {
+        let fake = CountingScanner {
+            inner: FakePlatformScanner {
+                all_processes: vec![
+                    RawProcessEntry {
+                        pid: 42,
+                        process_name: "node".to_string(),
+                        cpu: 1.0,
+                        mem_percent: 0.1,
+                        rss_kb: 1024,
+                        lstart: None,
+                        command: "node server.js".to_string(),
+                    },
+                    RawProcessEntry {
+                        pid: 99,
+                        process_name: "Spotify".to_string(),
+                        cpu: 1.0,
+                        mem_percent: 0.1,
+                        rss_kb: 1024,
+                        lstart: None,
+                        command: "Spotify".to_string(),
+                    },
+                ],
+                ..Default::default()
+            },
+            cwd_calls: Mutex::new(Vec::new()),
+        };
+
+        let processes = get_all_processes_with(&fake);
+
+        assert_eq!(processes.len(), 2);
+        assert_eq!(fake.cwd_calls.lock().unwrap().as_slice(), &[vec![42]]);
+    }
+
+    #[test]
+    fn dev_process_list_filters_non_dev_processes_before_cwd_lookup() {
+        let fake = CountingScanner {
+            inner: FakePlatformScanner {
+                all_processes: vec![
+                    RawProcessEntry {
+                        pid: 42,
+                        process_name: "node".to_string(),
+                        cpu: 1.0,
+                        mem_percent: 0.1,
+                        rss_kb: 1024,
+                        lstart: None,
+                        command: "node server.js".to_string(),
+                    },
+                    RawProcessEntry {
+                        pid: 99,
+                        process_name: "Spotify".to_string(),
+                        cpu: 1.0,
+                        mem_percent: 0.1,
+                        rss_kb: 1024,
+                        lstart: None,
+                        command: "Spotify".to_string(),
+                    },
+                ],
+                ..Default::default()
+            },
+            cwd_calls: Mutex::new(Vec::new()),
+        };
+
+        let processes = get_all_dev_processes_with(&fake);
+
+        assert_eq!(processes.len(), 1);
+        assert_eq!(processes[0].pid, 42);
+        assert_eq!(fake.cwd_calls.lock().unwrap().as_slice(), &[vec![42]]);
+    }
+
     fn fake_port(port: u16, pid: u32) -> PortInfo {
         port_with_status(port, pid, ProcessStatus::Healthy)
     }
@@ -433,5 +535,52 @@ mod tests {
 
     fn project_name(path: &std::path::Path) -> String {
         path.file_name().unwrap().to_string_lossy().to_string()
+    }
+
+    struct CountingScanner {
+        inner: FakePlatformScanner,
+        cwd_calls: Mutex<Vec<Vec<u32>>>,
+    }
+
+    impl PlatformScanner for CountingScanner {
+        fn get_listening_ports_raw(&self) -> Vec<RawPortEntry> {
+            self.inner.get_listening_ports_raw()
+        }
+
+        fn batch_process_info(
+            &self,
+            pids: &[u32],
+        ) -> std::collections::HashMap<u32, RawProcessDetails> {
+            self.inner.batch_process_info(pids)
+        }
+
+        fn batch_cwd(&self, pids: &[u32]) -> std::collections::HashMap<u32, PathBuf> {
+            self.cwd_calls.lock().unwrap().push(pids.to_vec());
+            self.inner.batch_cwd(pids)
+        }
+
+        fn get_all_processes_raw(&self) -> Vec<RawProcessEntry> {
+            self.inner.get_all_processes_raw()
+        }
+
+        fn get_process_tree(&self, pid: u32) -> Vec<ProcessTreeNode> {
+            self.inner.get_process_tree(pid)
+        }
+
+        fn pid_exists(&self, pid: u32) -> bool {
+            self.inner.pid_exists(pid)
+        }
+
+        fn kill_process(&self, pid: u32, signal: &str) -> bool {
+            self.inner.kill_process(pid, signal)
+        }
+
+        fn get_process_log_files(&self, pid: u32) -> Vec<LogFile> {
+            self.inner.get_process_log_files(pid)
+        }
+
+        fn get_system_log_command(&self, pid: u32, follow: bool) -> Option<String> {
+            self.inner.get_system_log_command(pid, follow)
+        }
     }
 }

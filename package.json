@@ -1,0 +1,27 @@
+{
+  "name": "ports-rs",
+  "version": "0.1.0-beta.1",
+  "description": "Rust-powered CLI for inspecting and managing listening ports",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/easyxdc/port-whisperer-rust.git"
+  },
+  "homepage": "https://github.com/easyxdc/port-whisperer-rust",
+  "bin": {
+    "ports": "bin/ports.js",
+    "whoisonport": "bin/whoisonport.js"
+  },
+  "files": [
+    "bin",
+    "scripts",
+    "vendor",
+    "README.md"
+  ],
+  "scripts": {
+    "postinstall": "node scripts/postinstall.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
