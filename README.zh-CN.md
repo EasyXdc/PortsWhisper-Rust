@@ -215,11 +215,7 @@ ports watch
 
 ## 📊 性能表现
 
-<p align="center">
-  <img src="./assets/performance-chart.svg" alt="Performance comparison chart" width="100%" />
-</p>
-
-图表使用的本地实测数据：
+当前记录的本地实测数据：
 
 | 命令 | Node 平均耗时 | Rust 平均耗时 |
 | --- | ---: | ---: |

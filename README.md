@@ -215,8 +215,7 @@ Press `Ctrl+C` to stop.
 
 ## 📊 Performance
 
-
-Fresh local measurements used in the chart:
+Fresh local measurements:
 
 | Command | Node avg | Rust avg |
 | --- | ---: | ---: |
