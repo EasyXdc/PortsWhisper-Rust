@@ -12,7 +12,14 @@ pub const GRAY: &str = "\x1b[90m";
 pub const BG_BLACK: &str = "\x1b[40m";
 
 fn wrap(s: impl AsRef<str>, code: &str) -> String {
+    if no_color() {
+        return s.as_ref().to_string();
+    }
     format!("{code}{}{RESET}", s.as_ref())
+}
+
+fn no_color() -> bool {
+    std::env::var_os("NO_COLOR").is_some()
 }
 
 pub fn bold(s: impl AsRef<str>) -> String {
@@ -56,22 +63,37 @@ pub fn gray(s: impl AsRef<str>) -> String {
 }
 
 pub fn cyan_bold(s: impl AsRef<str>) -> String {
+    if no_color() {
+        return s.as_ref().to_string();
+    }
     format!("{CYAN}{BOLD}{}{RESET}", s.as_ref())
 }
 
 pub fn white_bold(s: impl AsRef<str>) -> String {
+    if no_color() {
+        return s.as_ref().to_string();
+    }
     format!("{WHITE}{BOLD}{}{RESET}", s.as_ref())
 }
 
 pub fn yellow_bold(s: impl AsRef<str>) -> String {
+    if no_color() {
+        return s.as_ref().to_string();
+    }
     format!("{YELLOW}{BOLD}{}{RESET}", s.as_ref())
 }
 
 pub fn red_bold(s: impl AsRef<str>) -> String {
+    if no_color() {
+        return s.as_ref().to_string();
+    }
     format!("{RED}{BOLD}{}{RESET}", s.as_ref())
 }
 
 pub fn framework(name: &str) -> String {
+    if no_color() {
+        return name.to_string();
+    }
     match name {
         "Next.js" => format!("{WHITE}{BG_BLACK}{name}{RESET}"),
         "Vite" | "Python" | "esbuild" | "Elasticsearch" => yellow(name),
@@ -87,5 +109,36 @@ pub fn framework(name: &str) -> String {
         "Remix" | "Docker" | "PostgreSQL" | "MySQL" | "Webpack" => blue(name),
         "Astro" | "Gatsby" => magenta(name),
         _ => white(name),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{cyan_bold, gray};
+    use std::sync::{Mutex, OnceLock};
+
+    #[test]
+    fn no_color_disables_ansi_wrapping() {
+        let _guard = env_lock().lock().unwrap();
+        let previous = std::env::var_os("NO_COLOR");
+        unsafe { std::env::set_var("NO_COLOR", "1") };
+
+        assert_eq!(gray("plain"), "plain");
+        assert_eq!(cyan_bold("title"), "title");
+
+        restore_no_color(previous);
+    }
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    fn restore_no_color(previous: Option<std::ffi::OsString>) {
+        if let Some(value) = previous {
+            unsafe { std::env::set_var("NO_COLOR", value) };
+        } else {
+            unsafe { std::env::remove_var("NO_COLOR") };
+        }
     }
 }

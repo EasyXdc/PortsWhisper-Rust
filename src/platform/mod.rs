@@ -329,10 +329,18 @@ fn darwin_batch_cwd(pids: &[u32]) -> HashMap<u32, PathBuf> {
 
 #[cfg(target_os = "linux")]
 fn linux_batch_cwd(pids: &[u32]) -> HashMap<u32, PathBuf> {
+    linux_batch_cwd_with(pids, |path| std::fs::read_link(path))
+}
+
+#[cfg(target_os = "linux")]
+fn linux_batch_cwd_with<ReadLink>(pids: &[u32], read_link: ReadLink) -> HashMap<u32, PathBuf>
+where
+    ReadLink: Fn(&PathBuf) -> std::io::Result<PathBuf>,
+{
     let mut map = HashMap::new();
     for pid in pids {
         let path = PathBuf::from(format!("/proc/{pid}/cwd"));
-        if let Ok(target) = std::fs::read_link(path) {
+        if let Ok(target) = read_link(&path) {
             if target.is_absolute() {
                 map.insert(*pid, target);
             }
@@ -477,12 +485,39 @@ fn linux_proc_name(pid: u32) -> String {
 
 #[cfg(target_os = "linux")]
 fn linux_proc_details(pid: u32) -> Option<RawProcessDetails> {
-    let stat_content = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-    let close = stat_content.rfind(')')?;
-    let after: Vec<&str> = stat_content[close + 2..].split_whitespace().collect();
-    let stat = after.first().copied().unwrap_or("?").to_string();
-    let ppid = after.get(1).and_then(|v| v.parse().ok());
-    let rss_kb = std::fs::read_to_string(format!("/proc/{pid}/statm"))
+    linux_proc_details_with(
+        pid,
+        |path| std::fs::read_to_string(path),
+        |path| std::fs::read_to_string(path),
+        |path| std::fs::read(path),
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn linux_proc_details_with<ReadText, ReadStatm, ReadBytes>(
+    pid: u32,
+    read_stat: ReadText,
+    read_statm: ReadStatm,
+    read_cmdline: ReadBytes,
+) -> Option<RawProcessDetails>
+where
+    ReadText: Fn(String) -> std::io::Result<String>,
+    ReadStatm: Fn(String) -> std::io::Result<String>,
+    ReadBytes: Fn(String) -> std::io::Result<Vec<u8>>,
+{
+    let stat_content = read_stat(format!("/proc/{pid}/stat")).ok();
+    let (stat, ppid) = if let Some(stat_content) = stat_content {
+        let close = stat_content.rfind(')')?;
+        let after: Vec<&str> = stat_content[close + 2..].split_whitespace().collect();
+        (
+            after.first().copied().unwrap_or("?").to_string(),
+            after.get(1).and_then(|v| v.parse().ok()),
+        )
+    } else {
+        ("?".to_string(), None)
+    };
+
+    let rss_kb = read_statm(format!("/proc/{pid}/statm"))
         .ok()
         .and_then(|v| {
             v.split_whitespace()
@@ -491,7 +526,7 @@ fn linux_proc_details(pid: u32) -> Option<RawProcessDetails> {
         })
         .unwrap_or(0)
         * 4;
-    let command = std::fs::read(format!("/proc/{pid}/cmdline"))
+    let command = read_cmdline(format!("/proc/{pid}/cmdline"))
         .ok()
         .map(|bytes| {
             bytes
@@ -569,4 +604,49 @@ fn unix_pid_exists(pid: u32) -> bool {
         .status()
         .map(|s| s.success())
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(target_os = "windows")]
+    use super::windows_process_name_with;
+    #[cfg(target_os = "linux")]
+    use super::{linux_batch_cwd_with, linux_proc_details_with};
+    #[cfg(target_os = "linux")]
+    use crate::model::RawProcessDetails;
+    #[cfg(target_os = "linux")]
+    use std::collections::HashMap;
+    #[cfg(target_os = "linux")]
+    use std::io::{Error, ErrorKind};
+    #[cfg(target_os = "linux")]
+    use std::path::PathBuf;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_permission_errors_return_partial_defaults_instead_of_crashing() {
+        let cwd_map = linux_batch_cwd_with(&[42], |_| {
+            Err(Error::new(ErrorKind::PermissionDenied, "denied"))
+        });
+        assert!(cwd_map.is_empty());
+
+        let details = linux_proc_details_with(
+            42,
+            |_| Err(Error::new(ErrorKind::PermissionDenied, "denied")),
+            |_| Err(Error::new(ErrorKind::PermissionDenied, "denied")),
+            |_| Err(Error::new(ErrorKind::PermissionDenied, "denied")),
+        )
+        .expect("linux proc details should still return fallback details");
+
+        assert_eq!(details.pid, 42);
+        assert_eq!(details.command, "unknown");
+        assert_eq!(details.rss_kb, 0);
+        assert_eq!(details.ppid, None);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn inaccessible_windows_process_returns_none_instead_of_crashing() {
+        let name = windows_process_name_with(42, |_| None);
+        assert_eq!(name, None);
+    }
 }

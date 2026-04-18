@@ -154,7 +154,7 @@ fn run_port_detail(port: u32) -> i32 {
 mod tests {
     use super::{
         CliCommand, ParsedCli, apply_clean_answer, clean_confirmation_prompt, detail_kill_prompt,
-        parse_args, unknown_command_lines,
+        parse_args, run_clean_with, unknown_command_lines,
     };
     use crate::model::{PortInfo, ProcessStatus};
     use std::cell::RefCell;
@@ -261,6 +261,24 @@ mod tests {
         assert!(clean_confirmation_prompt().contains("Kill all? [y/N]"));
     }
 
+    #[test]
+    fn clean_path_reuses_single_orphaned_snapshot() {
+        let calls = RefCell::new(0usize);
+        let orphaned = vec![fake_port(3000, 42)];
+
+        let exit = run_clean_with(
+            || {
+                *calls.borrow_mut() += 1;
+                orphaned.clone()
+            },
+            |_| Some("n".to_string()),
+            |_pid, _signal| true,
+        );
+
+        assert_eq!(exit, 0);
+        assert_eq!(*calls.borrow(), 1);
+    }
+
     fn fake_port(port: u16, pid: u32) -> PortInfo {
         PortInfo {
             port,
@@ -282,7 +300,24 @@ mod tests {
 }
 
 fn run_clean() -> i32 {
-    let orphaned = scanner::find_orphaned_processes();
+    run_clean_with(
+        scanner::find_orphaned_processes,
+        |prompt| prompt_line(prompt),
+        kill::kill_process,
+    )
+}
+
+fn run_clean_with<FindOrphaned, Prompt, Kill>(
+    find_orphaned: FindOrphaned,
+    prompt: Prompt,
+    kill: Kill,
+) -> i32
+where
+    FindOrphaned: Fn() -> Vec<crate::model::PortInfo>,
+    Prompt: Fn(&str) -> Option<String>,
+    Kill: Fn(u32, &str) -> bool,
+{
+    let orphaned = find_orphaned();
     if orphaned.is_empty() {
         display::display_clean_results(&orphaned, &[], &[]);
         return 0;
@@ -306,8 +341,8 @@ fn run_clean() -> i32 {
         );
     }
     println!();
-    let answer = prompt_line(&clean_confirmation_prompt());
-    let outcome = apply_clean_answer(&orphaned, answer.as_deref(), kill::kill_process);
+    let answer = prompt(&clean_confirmation_prompt());
+    let outcome = apply_clean_answer(&orphaned, answer.as_deref(), kill);
     if outcome.confirmed {
         display::display_clean_results(&orphaned, &outcome.killed, &outcome.failed);
         return outcome.exit_code;

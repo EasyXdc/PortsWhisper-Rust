@@ -90,26 +90,26 @@
 
 ### 1.3 当前外部命令
 
-- [ ] macOS 端口扫描：`lsof -iTCP -sTCP:LISTEN -P -n`
-- [ ] macOS 进程详情：`ps -p <pidList> -o pid=,ppid=,stat=,rss=,lstart=,command=`
-- [ ] macOS cwd 查询：`lsof -a -d cwd -p <pidList>`
-- [ ] macOS 进程树：`ps -eo pid=,ppid=,comm=`
-- [ ] macOS 单进程日志：`lsof -p <pid>`
-- [ ] macOS 系统日志 fallback：`log show --predicate 'processID == <pid>' --style compact --last 1m`
-- [ ] macOS 系统日志 follow fallback：`log stream --predicate 'processID == <pid>' --style compact`
-- [ ] Linux 端口扫描优先路径：`ss -tlnp`
-- [ ] Linux 端口扫描 fallback：`netstat -tlnp`
-- [ ] Linux 进程详情：`ps -p <pidList> -o pid=,ppid=,stat=,rss=,lstart=,command=`
-- [ ] Linux 全进程详情：`ps -eo pid=,pcpu=,pmem=,rss=,lstart=,cmd=`
-- [ ] Linux cwd 查询：`/proc/<pid>/cwd`
-- [ ] Linux 进程树：`/proc/<pid>/stat`
-- [ ] Linux 日志 fd fallback：`/proc/<pid>/fd`
-- [ ] Linux 系统日志 fallback：`journalctl _PID=<pid> --no-pager -n 50`
-- [ ] Linux 系统日志 follow fallback：`journalctl _PID=<pid> -f --no-pager`
-- [ ] Windows 端口扫描：`netstat -ano -p TCP`
+- [x] macOS 端口扫描：`lsof -iTCP -sTCP:LISTEN -P -n`
+- [x] macOS 进程详情：`ps -p <pidList> -o pid=,ppid=,stat=,rss=,lstart=,command=`
+- [x] macOS cwd 查询：`lsof -a -d cwd -p <pidList>`
+- [x] macOS 进程树：`ps -eo pid=,ppid=,comm=`
+- [x] macOS 单进程日志：`lsof -p <pid>`
+- [x] macOS 系统日志 fallback：`log show --predicate 'processID == <pid>' --style compact --last 1m`
+- [x] macOS 系统日志 follow fallback：`log stream --predicate 'processID == <pid>' --style compact`
+- [x] Linux 端口扫描优先路径：`ss -tlnp`
+- [x] Linux 端口扫描 fallback：`netstat -tlnp`
+- [x] Linux 进程详情：`ps -p <pidList> -o pid=,ppid=,stat=,rss=,lstart=,command=`
+- [x] Linux 全进程详情：`ps -eo pid=,pcpu=,pmem=,rss=,lstart=,cmd=`
+- [x] Linux cwd 查询：`/proc/<pid>/cwd`
+- [x] Linux 进程树：`/proc/<pid>/stat`
+- [x] Linux 日志 fd fallback：`/proc/<pid>/fd`
+- [x] Linux 系统日志 fallback：`journalctl _PID=<pid> --no-pager -n 50`
+- [x] Linux 系统日志 follow fallback：`journalctl _PID=<pid> -f --no-pager`
+- [x] Windows 端口扫描：`netstat -ano -p TCP`
 - [ ] Windows 进程查询主路径：`wmic process ...`
-- [ ] Windows 进程查询 fallback：PowerShell `Get-Process` / `Get-CimInstance`
-- [ ] Windows 强制 kill 路径：`taskkill /F /PID <pid>`
+- [x] Windows 进程查询 fallback：PowerShell `Get-Process` / `Get-CimInstance`
+- [x] Windows 强制 kill 路径：`taskkill /F /PID <pid>`
 - [x] Docker 映射路径：`docker ps --format "{{.Ports}}\t{{.Names}}\t{{.Image}}"`
 - [x] Git 分支路径：`git -C "<cwd>" rev-parse --abbrev-ref HEAD`
 - [x] Unix 日志 tail 路径：`tail -n <lines> <file>`
@@ -192,7 +192,7 @@
 - [x] `PortInfo.project_name: Option<String>`。
 - [x] `PortInfo.framework: Option<String>`。
 - [x] `PortInfo.uptime: Option<String>`。
-- [ ] `PortInfo.start_time: Option<SystemTime or DateTime equivalent>`。
+- [x] `PortInfo.start_time: Option<SystemTime or DateTime equivalent>`。
 - [x] `PortInfo.status: ProcessStatus`。
 - [x] `PortInfo.memory: Option<String>`。
 - [x] `PortInfo.git_branch: Option<String>`。
@@ -337,7 +337,7 @@
 - [x] 只为解析到的 PID 获取项目根目录。
 - [x] 只为解析到的 PID 获取 Git 分支。
 - [x] 只为解析到的 PID 获取进程树。
-- [ ] 完全保留最终展示字段的格式一致性。
+- [x] 完全保留最终展示字段的格式一致性。
 
 ### 6.2 详情输出字段
 
@@ -1047,28 +1047,28 @@
 - [x] 使用 `/proc/<pid>/cmdline` 作为 command fallback。
 - [x] 使用 `/proc/<pid>/statm` 或 sysinfo 作为 RSS fallback。
 - [x] 使用 `/proc` 构建进程树。
-- [ ] 优雅处理权限缺失。
+- [x] 优雅处理权限缺失。
 
 ### 14.4 Windows 实现
 
 - [ ] 如果可行，优先使用 Windows API 读取 TCP table。
-- [ ] 保留 `netstat -ano -p TCP` fallback。
-- [ ] 只解析 `LISTENING` 行。
-- [ ] 用 `:(\d+)$` 从 local address 解析端口。
-- [ ] 从最后一列解析 PID。
-- [ ] 使用 Windows API、`wmic` 或 PowerShell fallback 解析进程名。
-- [ ] 保留进程名 `.exe` trimming 行为。
+- [x] 保留 `netstat -ano -p TCP` fallback。
+- [x] 只解析 `LISTENING` 行。
+- [x] 用 `:(\d+)$` 从 local address 解析端口。
+- [x] 从最后一列解析 PID。
+- [x] 使用 Windows API、`wmic` 或 PowerShell fallback 解析进程名。
+- [x] 保留进程名 `.exe` trimming 行为。
 - [ ] 如果原生 API 不覆盖命令行，则保留 `wmic` 主路径进程元数据行为。
 - [ ] `wmic` 不可用时保留 PowerShell fallback。
-- [ ] 使用 `taskkill /F /PID` 实现 force kill。
-- [ ] 用最佳 Windows 等价方式实现普通 kill。
-- [ ] 优雅处理不可访问进程。
+- [x] 使用 `taskkill /F /PID` 实现 force kill。
+- [x] 用最佳 Windows 等价方式实现普通 kill。
+- [x] 优雅处理不可访问进程。
 
 ## 15. 性能优化任务
 
 ### 15.1 快速启动
 
-- [ ] Rust 二进制应避免脚本运行时带来的动态启动开销。
+- [x] Rust 二进制应避免脚本运行时带来的动态启动开销。
 - [x] 命令分发前避免昂贵初始化。
 - [x] help 命令不应初始化 scanner。
 - [x] 无效命令不应初始化 scanner。
@@ -1076,14 +1076,14 @@
 
 ### 15.2 快照复用
 
-- [ ] 每次命令执行只构建一次进程快照。
-- [ ] 端口富化复用快照。
-- [ ] `ps` 行复用快照。
-- [ ] orphan/zombie 检测复用快照。
-- [ ] 缓存 `pid -> ProcessInfo`。
-- [ ] 缓存 `pid -> cwd`。
-- [ ] 缓存 `cwd -> project_root`。
-- [ ] 缓存 `project_root -> framework`。
+- [x] 每次命令执行只构建一次进程快照。
+- [x] 端口富化复用快照。
+- [x] `ps` 行复用快照。
+- [x] orphan/zombie 检测复用快照。
+- [x] 缓存 `pid -> ProcessInfo`。
+- [x] 缓存 `pid -> cwd`。
+- [x] 缓存 `cwd -> project_root`。
+- [x] 缓存 `project_root -> framework`。
 
 ### 15.3 延迟富化
 
@@ -1092,7 +1092,7 @@
 - [x] 除非执行 `logs` 命令，否则不要获取日志文件。
 - [x] 除非检测到 Docker-like listener，否则不要获取 Docker 信息。
 - [x] 除非需要 Docker collapse，否则 `ps` 不获取 Docker 信息。
-- [ ] 对已在过滤前排除的进程，尽量不读取 `package.json` 做框架检测。
+- [x] 对已在过滤前排除的进程，尽量不读取 `package.json` 做框架检测。
 
 ### 15.4 并行
 
@@ -1104,12 +1104,12 @@
 
 ### 15.5 超时
 
-- [ ] 对 Docker CLI fallback 应用 timeout。
-- [ ] 对 `lsof` fallback 应用 timeout。
-- [ ] 对 `ps` fallback 应用 timeout。
-- [ ] 对 Git 分支 fallback 应用 timeout。
-- [ ] 对系统日志命令 setup 应用 timeout（如相关）。
-- [ ] timeout 对列表命令应产出部分数据，而不是硬崩溃。
+- [x] 对 Docker CLI fallback 应用 timeout。
+- [x] 对 `lsof` fallback 应用 timeout。
+- [x] 对 `ps` fallback 应用 timeout。
+- [x] 对 Git 分支 fallback 应用 timeout。
+- [x] 对系统日志命令 setup 应用 timeout（如相关）。
+- [x] timeout 对列表命令应产出部分数据，而不是硬崩溃。
 
 ### 15.6 benchmark 目标
 
@@ -1165,7 +1165,7 @@
 - [x] 断言表头。
 - [x] 断言 summary 行。
 - [x] 断言缺失值 marker。
-- [ ] 如果颜色导致快照不稳定，则测试禁用颜色的输出。
+- [x] 如果颜色导致快照不稳定，则测试禁用颜色的输出。
 - [x] 对 ANSI 覆盖做启用颜色的 smoke 测试。
 
 ### 16.3 使用 fake platform 的集成测试
@@ -1210,57 +1210,57 @@
 - [x] 运行 Node `ports --help` 和 Rust `ports --help`。
 - [x] 对比命令列表。
 - [x] 语义对比 usage 文本。
-- [ ] 在 fake 或受控本地 server 上运行 Node 和 Rust。
-- [ ] 对比表格列。
-- [ ] 对比字段语义。
-- [ ] 对比过滤行为。
-- [ ] 使用 fake/injected process layer 对比 kill 解析行为。
-- [ ] 对比 logs 参数解析。
-- [ ] 对比 clean 检测。
-- [ ] 对比 watch diff 行为。
+- [x] 在 fake 或受控本地 server 上运行 Node 和 Rust。
+- [x] 对比表格列。
+- [x] 对比字段语义。
+- [x] 对比过滤行为。
+- [x] 使用 fake/injected process layer 对比 kill 解析行为。
+- [x] 对比 logs 参数解析。
+- [x] 对比 clean 检测。
+- [x] 对比 watch diff 行为。
 
 ## 17. 受控测试服务
 
 ### 17.1 本地 fixture 进程
 
-- [ ] 创建监听端口 `3000` 的简单 Node HTTP server fixture。
-- [ ] 创建 Vite-like package fixture。
-- [ ] 创建 Next-like package fixture。
-- [ ] 创建 Express-like package fixture。
-- [ ] 创建监听端口 `8000` 的 Python HTTP server fixture。
-- [ ] 可行时创建 FastAPI-like command fixture。
-- [ ] 必要时创建 Java 或通用长运行 fixture。
-- [ ] 创建 stdout 重定向到临时文件的进程。
-- [ ] 创建 stderr 重定向到临时文件的进程。
-- [ ] 创建没有重定向日志的进程。
+- [x] 创建监听端口 `3000` 的简单 Node HTTP server fixture。
+- [x] 创建 Vite-like package fixture。
+- [x] 创建 Next-like package fixture。
+- [x] 创建 Express-like package fixture。
+- [x] 创建监听端口 `8000` 的 Python HTTP server fixture。
+- [x] 可行时创建 FastAPI-like command fixture。
+- [x] 必要时创建 Java 或通用长运行 fixture。
+- [x] 创建 stdout 重定向到临时文件的进程。
+- [x] 创建 stderr 重定向到临时文件的进程。
+- [x] 创建没有重定向日志的进程。
 
 ### 17.2 Docker fixture
 
-- [ ] 可选：运行带 host port mapping 的 PostgreSQL 容器。
-- [ ] 可选：运行带 host port mapping 的 Redis 容器。
-- [ ] 可选：运行带 host port mapping 的 nginx 容器。
-- [ ] 可选：运行 LocalStack-like 镜像或 fixture mapping。
-- [ ] Docker 不可用时跳过 Docker 测试。
-- [ ] Docker 测试必须严格清理。
+- [x] 可选：运行带 host port mapping 的 PostgreSQL 容器。
+- [x] 可选：运行带 host port mapping 的 Redis 容器。
+- [x] 可选：运行带 host port mapping 的 nginx 容器。
+- [x] 可选：运行 LocalStack-like 镜像或 fixture mapping。
+- [x] Docker 不可用时跳过 Docker 测试。
+- [x] Docker 测试必须严格清理。
 
 ### 17.3 安全规则
 
-- [ ] 永远不要对用户任意进程运行 kill 集成测试。
-- [ ] 从测试 harness 启动测试进程。
-- [ ] 跟踪 child PID。
-- [ ] 测试后 kill child 进程。
-- [ ] 尽量使用随机空闲端口。
-- [ ] 自动化测试避免硬编码常见用户端口。
+- [x] 永远不要对用户任意进程运行 kill 集成测试。
+- [x] 从测试 harness 启动测试进程。
+- [x] 跟踪 child PID。
+- [x] 测试后 kill child 进程。
+- [x] 尽量使用随机空闲端口。
+- [x] 自动化测试避免硬编码常见用户端口。
 
 ## 18. 迁移与 cutover 计划
 
 ### 18.1 阶段 1：基线与测试 harness
 
 - [x] 添加本清单。
-- [ ] 添加基线行为说明。
-- [ ] 添加 fixture 设计。
+- [x] 添加基线行为说明。
+- [x] 添加 fixture 设计。
 - [x] 添加 Rust 项目骨架。
-- [ ] 添加 fake platform scanner。
+- [x] 添加 fake platform scanner。
 - [x] 添加检测和解析单元测试。
 - [x] 添加 display golden output 测试。
 
@@ -1322,13 +1322,13 @@
 - [ ] 如需要，添加 Linux arm64 release workflow。
 - [ ] 添加 Windows x64 release workflow。
 - [ ] 记录 npm 安装方式。
-- [ ] 记录 cargo 安装方式。
-- [ ] 记录直接下载二进制方式。
+- [x] 记录 cargo 安装方式。
+- [x] 记录直接下载二进制方式。
 
 ### 18.7 阶段 7：Node 移除或 wrapper
 
 - [ ] 在 Rust 兼容性验收前保留 Node 实现。
-- [ ] 添加迁移说明，解释 Rust 重写。
+- [x] 添加迁移说明，解释 Rust 重写。
 - [ ] 决定旧 `src/*.js` 是否作为 fallback 保留。
 - [ ] 如果移除 Node source，确保 npm package 仍有正确 files。
 - [ ] 如果保留 Node wrapper，确保它只分发到 Rust binary，不重新引入启动延迟。

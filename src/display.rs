@@ -257,7 +257,7 @@ fn render_port_detail_body(info: Option<&PortInfo>) -> String {
             .unwrap_or_else(|| style::gray("—")),
     );
     if let Some(started) = &info.start_time {
-        push_field(&mut out, "Started", &style::gray(started));
+        push_field(&mut out, "Started", &style::gray(started.to_string()));
     }
     out.push('\n');
     out.push_str(&format!("{}\n", style::cyan_bold("  Location")));
@@ -551,7 +551,7 @@ mod tests {
         render_empty_process_table_message, render_port_detail_body, render_table,
         render_watch_event_line, strip_ansi, visible_len,
     };
-    use crate::model::{PortInfo, ProcessInfo, ProcessStatus, ProcessTreeNode};
+    use crate::model::{DisplayTime, PortInfo, ProcessInfo, ProcessStatus, ProcessTreeNode};
     use std::path::PathBuf;
 
     #[test]
@@ -674,6 +674,35 @@ mod tests {
     }
 
     #[test]
+    fn table_headers_match_node_reference_columns() {
+        assert_eq!(
+            PORT_HEADERS,
+            [
+                "PORT",
+                "PROCESS",
+                "PID",
+                "PROJECT",
+                "FRAMEWORK",
+                "UPTIME",
+                "STATUS"
+            ]
+        );
+        assert_eq!(
+            PROCESS_HEADERS,
+            [
+                "PID",
+                "PROCESS",
+                "CPU%",
+                "MEM",
+                "PROJECT",
+                "FRAMEWORK",
+                "UPTIME",
+                "WHAT",
+            ]
+        );
+    }
+
+    #[test]
     fn visible_width_truncation_handles_wide_unicode() {
         let rows = vec![vec!["表表表A".to_string()]];
         let table = strip_ansi(&render_table(&["PROJECT"], &rows));
@@ -715,7 +744,7 @@ mod tests {
             project_name: Some("demo".to_string()),
             framework: Some("Vite".to_string()),
             uptime: Some("1m 2s".to_string()),
-            start_time: Some("Fri Apr 17 10:00:00 2026".to_string()),
+            start_time: Some("Fri Apr 17 10:00:00 2026".parse::<DisplayTime>().unwrap()),
             status: ProcessStatus::Orphaned,
             memory: Some("12.0 MB".to_string()),
             git_branch: Some("main".to_string()),

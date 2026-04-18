@@ -1,5 +1,5 @@
-use super::{PlatformScanner, unix_batch_process_info, unix_pid_exists, unix_process_tree};
 use super::{linux_batch_cwd, linux_listening_ports_raw, unix_all_processes_raw};
+use super::{unix_batch_process_info, unix_pid_exists, unix_process_tree, PlatformScanner};
 use crate::kill;
 use crate::logs;
 use crate::model::{LogFile, ProcessTreeNode, RawPortEntry, RawProcessDetails, RawProcessEntry};

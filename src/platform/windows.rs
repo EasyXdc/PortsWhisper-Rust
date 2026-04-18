@@ -1,6 +1,6 @@
 use super::{
-    PlatformScanner, windows_all_processes_raw, windows_batch_cwd, windows_batch_process_info,
-    windows_listening_ports_raw, windows_process_name,
+    windows_all_processes_raw, windows_batch_cwd, windows_batch_process_info,
+    windows_listening_ports_raw, windows_process_name, PlatformScanner,
 };
 use crate::kill;
 use crate::logs;

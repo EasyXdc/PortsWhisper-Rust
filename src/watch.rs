@@ -353,6 +353,16 @@ mod tests {
     }
 
     #[test]
+    fn watch_diff_matches_node_reference_by_comparing_port_sets_only() {
+        let previous = HashMap::from([(3000, port_with_pid(3000, 30))]);
+        let current = HashMap::from([(3000, port_with_pid(3000, 31))]);
+
+        let events = diff_watch_events(&previous, &current);
+
+        assert!(events.is_empty());
+    }
+
+    #[test]
     fn watch_scan_reuses_cached_docker_mapping_when_docker_ports_unchanged() {
         let mut inner = FakePlatformScanner {
             listening_ports: vec![RawPortEntry {

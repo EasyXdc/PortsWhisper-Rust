@@ -4,30 +4,37 @@ use crate::style;
 use std::process::{Command, Stdio};
 
 pub fn kill_process(pid: u32, signal: &str) -> bool {
-    if cfg!(target_os = "windows") && signal == "SIGKILL" {
-        return Command::new("taskkill")
-            .args(["/F", "/PID", &pid.to_string()])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-    }
-    let sig = if signal == "SIGKILL" {
-        "-KILL"
-    } else {
-        "-TERM"
-    };
-    Command::new("kill")
-        .arg(sig)
-        .arg(pid.to_string())
+    let (program, args) = build_kill_command(pid, signal, cfg!(target_os = "windows"));
+    Command::new(program)
+        .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
         .map(|s| s.success())
         .unwrap_or(false)
+}
+
+fn build_kill_command(pid: u32, signal: &str, windows_mode: bool) -> (String, Vec<String>) {
+    if windows_mode {
+        if signal == "SIGKILL" {
+            return (
+                "taskkill".to_string(),
+                vec!["/F".to_string(), "/PID".to_string(), pid.to_string()],
+            );
+        }
+        return (
+            "taskkill".to_string(),
+            vec!["/PID".to_string(), pid.to_string()],
+        );
+    }
+
+    let sig = if signal == "SIGKILL" {
+        "-KILL"
+    } else {
+        "-TERM"
+    };
+    ("kill".to_string(), vec![sig.to_string(), pid.to_string()])
 }
 
 pub fn run_kill(args: &[String]) -> i32 {
@@ -196,7 +203,7 @@ fn validate_range_target(target: &str, start: u32, end: u32) -> Result<(), Strin
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_range, run_kill_with, validate_range_target};
+    use super::{build_kill_command, parse_range, run_kill_with, validate_range_target};
     use crate::model::{KillResolutionKind, KillTargetResolution, PortInfo, ProcessStatus};
     use std::cell::RefCell;
 
@@ -326,6 +333,24 @@ mod tests {
         );
 
         assert_eq!(exit, 1);
+    }
+
+    #[test]
+    fn windows_kill_command_uses_taskkill_for_term_and_force() {
+        assert_eq!(
+            build_kill_command(42, "SIGTERM", true),
+            (
+                "taskkill".to_string(),
+                vec!["/PID".to_string(), "42".to_string()]
+            )
+        );
+        assert_eq!(
+            build_kill_command(42, "SIGKILL", true),
+            (
+                "taskkill".to_string(),
+                vec!["/F".to_string(), "/PID".to_string(), "42".to_string()]
+            )
+        );
     }
 
     fn fake_port(port: u16, pid: u32) -> PortInfo {

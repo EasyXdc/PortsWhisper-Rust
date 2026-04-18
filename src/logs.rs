@@ -6,35 +6,27 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
+struct LogsRequest {
+    follow: bool,
+    err_only: bool,
+    lines: String,
+    targets: Vec<String>,
+}
+
 pub fn run_logs(args: &[String]) -> i32 {
-    let follow = args.iter().any(|a| a == "-f" || a == "--follow");
-    let err_only = args.iter().any(|a| a == "--err");
-    let lines = parse_lines(args);
-    let targets: Vec<&String> = args
-        .iter()
-        .skip(1)
-        .filter(|a| {
-            let s = a.as_str();
-            s != "-f"
-                && s != "--follow"
-                && s != "--err"
-                && s != "--lines"
-                && !s.starts_with("--lines=")
-                && s != lines
-        })
-        .collect();
-    if targets.is_empty() {
+    let parsed = parse_logs_request(args);
+    if parsed.targets.is_empty() {
         for line in logs_usage_lines() {
             println!("{line}");
         }
         return 1;
     }
-    let Ok(target) = targets[0].parse::<u32>() else {
+    let Ok(target) = parsed.targets[0].parse::<u32>() else {
         println!(
             "{}",
             style::red(format!(
                 "\n  ✕ \"{}\" is not a valid port/PID\n",
-                targets[0]
+                parsed.targets[0]
             ))
         );
         return 1;
@@ -64,14 +56,14 @@ pub fn run_logs(args: &[String]) -> i32 {
     println!();
 
     let log_files = get_process_log_files(resolved.pid);
-    match select_log_file(&log_files, err_only) {
-        LogSelection::Tail(file) if err_only => {
+    match select_log_file(&log_files, parsed.err_only) {
+        LogSelection::Tail(file) if parsed.err_only => {
             println!(
                 "  {} Tailing stderr: {}\n",
                 style::yellow("▸"),
                 style::dim(file.path.to_string_lossy())
             );
-            return tail_file(&file.path, lines, follow);
+            return tail_file(&file.path, &parsed.lines, parsed.follow);
         }
         LogSelection::NoStderr => {
             println!(
@@ -99,7 +91,7 @@ pub fn run_logs(args: &[String]) -> i32 {
                 label,
                 style::dim(file.path.to_string_lossy())
             );
-            return tail_file(&file.path, lines, follow);
+            return tail_file(&file.path, &parsed.lines, parsed.follow);
         }
         LogSelection::NeedsUserSelection => {}
         LogSelection::NoFiles => {}
@@ -143,10 +135,10 @@ pub fn run_logs(args: &[String]) -> i32 {
             style::green("▸"),
             style::dim(selected.path.to_string_lossy())
         );
-        return tail_file(&selected.path, lines, follow);
+        return tail_file(&selected.path, &parsed.lines, parsed.follow);
     }
 
-    if let Some(sys_cmd) = get_system_log_command(resolved.pid, follow) {
+    if let Some(sys_cmd) = get_system_log_command(resolved.pid, parsed.follow) {
         println!(
             "{}",
             style::yellow("  No log files found. Falling back to system log...\n")
@@ -168,6 +160,32 @@ pub fn run_logs(args: &[String]) -> i32 {
         )
     );
     0
+}
+
+fn parse_logs_request(args: &[String]) -> LogsRequest {
+    let follow = args.iter().any(|a| a == "-f" || a == "--follow");
+    let err_only = args.iter().any(|a| a == "--err");
+    let lines = parse_lines(args).to_string();
+    let targets = args
+        .iter()
+        .skip(1)
+        .filter(|a| {
+            let s = a.as_str();
+            s != "-f"
+                && s != "--follow"
+                && s != "--err"
+                && s != "--lines"
+                && !s.starts_with("--lines=")
+                && s != lines
+        })
+        .cloned()
+        .collect();
+    LogsRequest {
+        follow,
+        err_only,
+        lines,
+        targets,
+    }
 }
 
 pub fn get_process_log_files(pid: u32) -> Vec<LogFile> {
@@ -421,8 +439,8 @@ fn log_header_lines(port_label: &str, pid: u32, process_name: &str) -> [String; 
 mod tests {
     use super::{
         LogSelection, LogSelectionChoice, TailCommand, build_tail_command, choose_log_file_index,
-        is_log_like_path, log_header_lines, logs_usage_lines, parse_lines, select_log_file,
-        sort_and_dedupe_log_files,
+        is_log_like_path, log_header_lines, logs_usage_lines, parse_lines, parse_logs_request,
+        select_log_file, sort_and_dedupe_log_files,
     };
     use crate::model::{LogFdKind, LogFile};
     use std::path::PathBuf;
@@ -563,6 +581,16 @@ mod tests {
                 ])
             );
         }
+    }
+
+    #[test]
+    fn logs_argument_parsing_matches_node_reference_behavior() {
+        let parsed = parse_logs_request(&args(&["logs", "3000", "--lines=5", "-f", "--err"]));
+
+        assert_eq!(parsed.targets, vec!["3000".to_string()]);
+        assert_eq!(parsed.lines, "5");
+        assert!(parsed.follow);
+        assert!(parsed.err_only);
     }
 
     fn log_file(path: &str, fd: LogFdKind, kind: &str, priority: u8) -> LogFile {

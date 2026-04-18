@@ -1,6 +1,6 @@
 use crate::docker;
 use crate::framework::{detect_framework, detect_framework_from_command, is_dev_process};
-use crate::model::{DockerInfo, PortInfo, ProcessStatus, RawPortEntry};
+use crate::model::{DisplayTime, DockerInfo, PortInfo, ProcessStatus, RawPortEntry};
 use crate::platform::{self, PlatformScanner};
 use crate::util::{
     find_project_root, format_memory, format_uptime_from_lstart, path_basename, run_output,
@@ -54,24 +54,55 @@ fn enrich_port_entries(
     detailed: bool,
     docker_map_override: Option<HashMap<u16, DockerInfo>>,
 ) -> Vec<PortInfo> {
-    enrich_port_entries_with_docker_map(
+    enrich_port_entries_with_detectors(
         scanner,
         entries,
         detailed,
         docker_map_override,
         docker::batch_docker_info,
+        find_project_root,
+        detect_framework,
     )
 }
 
-fn enrich_port_entries_with_docker_map<DockerMap>(
+fn enrich_port_entries_with_detectors<DockerMap, FindRoot, DetectFramework>(
     scanner: &dyn PlatformScanner,
     entries: Vec<RawPortEntry>,
     detailed: bool,
     docker_map_override: Option<HashMap<u16, DockerInfo>>,
     docker_map_provider: DockerMap,
+    find_root: FindRoot,
+    detect_framework_fn: DetectFramework,
 ) -> Vec<PortInfo>
 where
     DockerMap: Fn() -> HashMap<u16, DockerInfo>,
+    FindRoot: Fn(&Path) -> std::path::PathBuf,
+    DetectFramework: Fn(&Path) -> Option<String>,
+{
+    enrich_port_entries_with_detectors_inner(
+        scanner,
+        entries,
+        detailed,
+        docker_map_override,
+        docker_map_provider,
+        find_root,
+        detect_framework_fn,
+    )
+}
+
+fn enrich_port_entries_with_detectors_inner<DockerMap, FindRoot, DetectFramework>(
+    scanner: &dyn PlatformScanner,
+    entries: Vec<RawPortEntry>,
+    detailed: bool,
+    docker_map_override: Option<HashMap<u16, DockerInfo>>,
+    docker_map_provider: DockerMap,
+    find_root: FindRoot,
+    detect_framework_fn: DetectFramework,
+) -> Vec<PortInfo>
+where
+    DockerMap: Fn() -> HashMap<u16, DockerInfo>,
+    FindRoot: Fn(&Path) -> std::path::PathBuf,
+    DetectFramework: Fn(&Path) -> Option<String>,
 {
     let pids: Vec<u32> = entries
         .iter()
@@ -91,6 +122,8 @@ where
     };
 
     let mut results = Vec::new();
+    let mut root_cache: HashMap<std::path::PathBuf, std::path::PathBuf> = HashMap::new();
+    let mut framework_cache: HashMap<std::path::PathBuf, Option<String>> = HashMap::new();
     for entry in entries {
         let ps = ps_map.get(&entry.pid);
         let cwd = cwd_map.get(&entry.pid);
@@ -121,7 +154,7 @@ where
                 info.memory = Some(format_memory(ps.rss_kb));
             }
             if let Some(lstart) = &ps.lstart {
-                info.start_time = Some(lstart.clone());
+                info.start_time = lstart.parse::<DisplayTime>().ok();
                 info.uptime = format_uptime_from_lstart(lstart);
             }
             info.framework = detect_framework_from_command(&ps.command, &entry.process_name);
@@ -136,11 +169,17 @@ where
 
         if let Some(cwd) = cwd {
             if docker.is_none() {
-                let project_root = find_project_root(cwd);
+                let project_root = root_cache
+                    .entry(cwd.clone())
+                    .or_insert_with(|| find_root(cwd))
+                    .clone();
                 info.cwd = Some(project_root.clone());
                 info.project_name = path_basename(&project_root);
                 if info.framework.is_none() {
-                    info.framework = detect_framework(&project_root);
+                    info.framework = framework_cache
+                        .entry(project_root.clone())
+                        .or_insert_with(|| detect_framework_fn(&project_root))
+                        .clone();
                 }
                 if detailed {
                     info.git_branch = git_branch(&project_root);
@@ -175,8 +214,9 @@ fn git_branch(root: &Path) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        enrich_port_entries_with_docker_map, get_listening_ports_with, get_port_details_with,
+        enrich_port_entries_with_detectors, get_listening_ports_with, get_port_details_with,
     };
+    use crate::framework::detect_framework;
     use crate::framework::is_dev_process;
     use crate::model::{
         DockerInfo, LogFile, ProcessStatus, ProcessTreeNode, RawPortEntry, RawProcessDetails,
@@ -184,6 +224,7 @@ mod tests {
     };
     use crate::platform::PlatformScanner;
     use crate::test_support::FakePlatformScanner;
+    use crate::util::find_project_root;
     use std::cell::RefCell;
     use std::collections::HashMap;
     use std::fs;
@@ -308,6 +349,90 @@ mod tests {
     }
 
     #[test]
+    fn port_field_semantics_match_node_reference_enrichment() {
+        let project = temp_project("ports-semantics");
+        fs::write(
+            project.join("package.json"),
+            r#"{"dependencies":{"vite":"latest"}}"#,
+        )
+        .unwrap();
+
+        let mut fake = FakePlatformScanner {
+            listening_ports: vec![
+                RawPortEntry {
+                    port: 3000,
+                    pid: 42,
+                    process_name: "node".to_string(),
+                },
+                RawPortEntry {
+                    port: 5432,
+                    pid: 99,
+                    process_name: "com.docker.backend".to_string(),
+                },
+            ],
+            ..Default::default()
+        };
+        fake.process_details.insert(
+            42,
+            RawProcessDetails {
+                pid: 42,
+                ppid: Some(1),
+                stat: "S".to_string(),
+                rss_kb: 2048,
+                lstart: Some("Fri Apr 17 10:00:00 2026".to_string()),
+                command: "node /repo/server.js".to_string(),
+            },
+        );
+        fake.process_details.insert(
+            99,
+            RawProcessDetails {
+                pid: 99,
+                ppid: Some(2),
+                stat: "S".to_string(),
+                rss_kb: 4096,
+                lstart: None,
+                command: "com.docker.backend".to_string(),
+            },
+        );
+        fake.cwd.insert(42, project.clone());
+
+        let docker_map = HashMap::from([(
+            5432,
+            DockerInfo {
+                host_port: 5432,
+                container_name: "pg".to_string(),
+                image: "postgres:16".to_string(),
+                framework: "PostgreSQL".to_string(),
+            },
+        )]);
+
+        let ports = get_listening_ports_with(&fake, false, Some(docker_map));
+        let node = ports.iter().find(|p| p.port == 3000).unwrap();
+        assert_eq!(node.process_name, "node");
+        assert_eq!(node.raw_name, "node");
+        assert_eq!(
+            node.project_name.as_deref(),
+            Some(project_name(&project).as_str())
+        );
+        assert_eq!(node.framework.as_deref(), Some("Node.js"));
+        assert_eq!(node.status, ProcessStatus::Orphaned);
+        assert_eq!(node.memory.as_deref(), Some("2.0 MB"));
+        assert_eq!(
+            node.start_time.as_ref().map(ToString::to_string).as_deref(),
+            Some("Fri Apr 17 10:00:00 2026")
+        );
+        assert!(node.uptime.is_some());
+
+        let docker = ports.iter().find(|p| p.port == 5432).unwrap();
+        assert_eq!(docker.process_name, "docker");
+        assert_eq!(docker.raw_name, "com.docker.backend");
+        assert_eq!(docker.project_name.as_deref(), Some("pg"));
+        assert_eq!(docker.framework.as_deref(), Some("PostgreSQL"));
+
+        fs::remove_dir_all(project).unwrap();
+    }
+
+    #[test]
     fn port_detail_only_enriches_target_port() {
         let mut inner = FakePlatformScanner {
             listening_ports: vec![
@@ -371,6 +496,40 @@ mod tests {
     }
 
     #[test]
+    fn port_info_start_time_is_stored_as_datetime_equivalent() {
+        let mut fake = FakePlatformScanner {
+            listening_ports: vec![RawPortEntry {
+                port: 3000,
+                pid: 42,
+                process_name: "node".to_string(),
+            }],
+            ..Default::default()
+        };
+        fake.process_details.insert(
+            42,
+            RawProcessDetails {
+                pid: 42,
+                ppid: Some(1),
+                stat: "S".to_string(),
+                rss_kb: 2048,
+                lstart: Some("Fri Apr 17 10:00:00 2026".to_string()),
+                command: "node server.js".to_string(),
+            },
+        );
+
+        let detail = get_port_details_with(&fake, 3000, None).expect("detail should exist");
+
+        let started = detail.start_time.expect("start time should be present");
+        assert_eq!(started.year, 2026);
+        assert_eq!(started.month, 4);
+        assert_eq!(started.day, 17);
+        assert_eq!(started.hour, 10);
+        assert_eq!(started.minute, 0);
+        assert_eq!(started.second, 0);
+        assert_eq!(started.to_string(), "Fri Apr 17 10:00:00 2026");
+    }
+
+    #[test]
     fn non_docker_ports_do_not_invoke_docker_provider() {
         let mut fake = FakePlatformScanner {
             listening_ports: vec![RawPortEntry {
@@ -393,7 +552,7 @@ mod tests {
         );
 
         let docker_calls = AtomicUsize::new(0);
-        let ports = enrich_port_entries_with_docker_map(
+        let ports = enrich_port_entries_with_detectors(
             &fake,
             fake.listening_ports.clone(),
             false,
@@ -402,10 +561,87 @@ mod tests {
                 docker_calls.fetch_add(1, Ordering::SeqCst);
                 HashMap::new()
             },
+            find_project_root,
+            detect_framework,
         );
 
         assert_eq!(ports.len(), 1);
         assert_eq!(docker_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn repeated_cwd_reuses_project_root_and_framework_detection() {
+        let shared_root = temp_project("shared-root-cache");
+        fs::write(
+            shared_root.join("package.json"),
+            r#"{"dependencies":{"vite":"latest"}}"#,
+        )
+        .unwrap();
+        let nested = shared_root.join("apps/web");
+        fs::create_dir_all(&nested).unwrap();
+
+        let mut fake = FakePlatformScanner {
+            listening_ports: vec![
+                RawPortEntry {
+                    port: 3000,
+                    pid: 42,
+                    process_name: "custom-dev".to_string(),
+                },
+                RawPortEntry {
+                    port: 3001,
+                    pid: 43,
+                    process_name: "custom-dev".to_string(),
+                },
+            ],
+            ..Default::default()
+        };
+        fake.process_details.insert(
+            42,
+            RawProcessDetails {
+                pid: 42,
+                ppid: Some(1),
+                stat: "S".to_string(),
+                rss_kb: 1024,
+                lstart: None,
+                command: "custom-dev /repo/a.js".to_string(),
+            },
+        );
+        fake.process_details.insert(
+            43,
+            RawProcessDetails {
+                pid: 43,
+                ppid: Some(1),
+                stat: "S".to_string(),
+                rss_kb: 1024,
+                lstart: None,
+                command: "custom-dev /repo/b.js".to_string(),
+            },
+        );
+        fake.cwd.insert(42, nested.clone());
+        fake.cwd.insert(43, nested.clone());
+
+        let root_calls = AtomicUsize::new(0);
+        let framework_calls = AtomicUsize::new(0);
+        let ports = enrich_port_entries_with_detectors(
+            &fake,
+            fake.listening_ports.clone(),
+            false,
+            None,
+            || HashMap::new(),
+            |cwd| {
+                root_calls.fetch_add(1, Ordering::SeqCst);
+                find_project_root(cwd)
+            },
+            |root| {
+                framework_calls.fetch_add(1, Ordering::SeqCst);
+                detect_framework(root)
+            },
+        );
+
+        assert_eq!(ports.len(), 2);
+        assert_eq!(root_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(framework_calls.load(Ordering::SeqCst), 1);
+        fs::remove_dir_all(shared_root).unwrap();
     }
 
     struct CountingScanner {

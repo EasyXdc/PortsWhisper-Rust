@@ -11,8 +11,7 @@ pub mod ports;
 pub mod process;
 pub mod scanner;
 pub mod style;
-#[cfg(test)]
-pub(crate) mod test_support;
+pub mod test_support;
 pub mod util;
 pub mod watch;
 

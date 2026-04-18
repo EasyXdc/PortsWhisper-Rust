@@ -3,7 +3,7 @@ use crate::framework::{
     summarize_command,
 };
 use crate::model::{
-    KillResolutionKind, KillTargetResolution, PortInfo, ProcessInfo, ProcessStatus,
+    KillResolutionKind, KillTargetResolution, PortInfo, ProcessInfo, ProcessStatus, RawProcessEntry,
 };
 use crate::platform::{self, PlatformScanner};
 use crate::ports;
@@ -21,6 +21,39 @@ pub(crate) fn get_all_processes_with(scanner: &dyn PlatformScanner) -> Vec<Proce
         .map(|e| e.pid)
         .collect();
     let cwd_map = scanner.batch_cwd(&non_docker_pids);
+    let processes = enrich_process_entries_with_detectors(
+        entries,
+        &cwd_map,
+        find_project_root,
+        detect_framework,
+    );
+    let _by_pid = build_process_index(&processes);
+    processes
+}
+
+fn build_process_index(processes: &[ProcessInfo]) -> std::collections::HashMap<u32, ProcessInfo> {
+    processes
+        .iter()
+        .cloned()
+        .map(|process| (process.pid, process))
+        .collect()
+}
+
+fn enrich_process_entries_with_detectors<FindRoot, DetectFramework>(
+    entries: Vec<RawProcessEntry>,
+    cwd_map: &std::collections::HashMap<u32, std::path::PathBuf>,
+    find_root: FindRoot,
+    detect_framework_fn: DetectFramework,
+) -> Vec<ProcessInfo>
+where
+    FindRoot: Fn(&std::path::Path) -> std::path::PathBuf,
+    DetectFramework: Fn(&std::path::Path) -> Option<String>,
+{
+    let mut root_cache: std::collections::HashMap<std::path::PathBuf, std::path::PathBuf> =
+        std::collections::HashMap::new();
+    let mut framework_cache: std::collections::HashMap<std::path::PathBuf, Option<String>> =
+        std::collections::HashMap::new();
+
     entries
         .into_iter()
         .map(|e| {
@@ -40,12 +73,21 @@ pub(crate) fn get_all_processes_with(scanner: &dyn PlatformScanner) -> Vec<Proce
                 uptime: e.lstart.as_deref().and_then(format_uptime_from_lstart),
                 status_raw: String::new(),
             };
-            if let Some(cwd) = cwd {
-                let root = find_project_root(cwd);
-                info.cwd = Some(root.clone());
-                info.project_name = path_basename(&root);
-                if info.framework.is_none() {
-                    info.framework = detect_framework(&root);
+            let should_enrich_project = info.framework.is_some() || keep_dev_process(&info);
+            if should_enrich_project {
+                if let Some(cwd) = cwd {
+                    let root = root_cache
+                        .entry(cwd.clone())
+                        .or_insert_with(|| find_root(cwd))
+                        .clone();
+                    info.cwd = Some(root.clone());
+                    info.project_name = path_basename(&root);
+                    if info.framework.is_none() {
+                        info.framework = framework_cache
+                            .entry(root.clone())
+                            .or_insert_with(|| detect_framework_fn(&root))
+                            .clone();
+                    }
                 }
             }
             info
@@ -54,7 +96,14 @@ pub(crate) fn get_all_processes_with(scanner: &dyn PlatformScanner) -> Vec<Proce
 }
 
 pub fn find_orphaned_processes() -> Vec<PortInfo> {
-    ports::get_listening_ports(false)
+    find_orphaned_processes_with(|| ports::get_listening_ports(false))
+}
+
+fn find_orphaned_processes_with<GetPorts>(get_ports: GetPorts) -> Vec<PortInfo>
+where
+    GetPorts: Fn() -> Vec<PortInfo>,
+{
+    get_ports()
         .into_iter()
         .filter(|p| matches!(p.status, ProcessStatus::Orphaned | ProcessStatus::Zombie))
         .collect()
@@ -103,14 +152,20 @@ pub fn keep_dev_process(info: &ProcessInfo) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{get_all_processes_with, keep_dev_process, resolve_kill_target_with};
+    use super::{
+        build_process_index, enrich_process_entries_with_detectors, find_orphaned_processes_with,
+        get_all_processes_with, keep_dev_process, resolve_kill_target_with,
+    };
+    use crate::framework::detect_framework;
     use crate::model::{KillResolutionKind, PortInfo, ProcessStatus, RawProcessEntry};
     use crate::test_support::FakePlatformScanner;
+    use crate::util::find_project_root;
     use std::fs;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
-    fn kill_target_resolution_prefers_ports_then_falls_back_to_pid() {
+    fn kill_target_resolution_matches_node_reference_port_then_pid_behavior() {
         let port_info = fake_port(3000, 4242);
         let by_port = resolve_kill_target_with(
             3000,
@@ -132,6 +187,7 @@ mod tests {
 
         let large_pid = resolve_kill_target_with(70_000, |_| panic!("not a port"), |_| true)
             .expect("large pid should resolve");
+        assert_eq!(large_pid.pid, 70_000);
         assert_eq!(large_pid.via, KillResolutionKind::Pid);
 
         assert!(resolve_kill_target_with(0, |_| None, |_| true).is_none());
@@ -194,7 +250,138 @@ mod tests {
         fs::remove_dir_all(project).unwrap();
     }
 
+    #[test]
+    fn repeated_process_cwds_reuse_project_root_and_framework_detection() {
+        let project = temp_project("process-root-cache");
+        fs::write(
+            project.join("package.json"),
+            r#"{"dependencies":{"vite":"latest"}}"#,
+        )
+        .unwrap();
+        let nested = project.join("apps/web");
+        fs::create_dir_all(&nested).unwrap();
+
+        let entries = vec![
+            RawProcessEntry {
+                pid: 42,
+                process_name: "npm".to_string(),
+                cpu: 1.0,
+                mem_percent: 0.1,
+                rss_kb: 1024,
+                lstart: None,
+                command: "npm run dev".to_string(),
+            },
+            RawProcessEntry {
+                pid: 43,
+                process_name: "npm".to_string(),
+                cpu: 1.0,
+                mem_percent: 0.1,
+                rss_kb: 1024,
+                lstart: None,
+                command: "npm run start".to_string(),
+            },
+        ];
+        let cwd_map = std::collections::HashMap::from([(42, nested.clone()), (43, nested.clone())]);
+        let root_calls = AtomicUsize::new(0);
+        let framework_calls = AtomicUsize::new(0);
+
+        let processes = enrich_process_entries_with_detectors(
+            entries,
+            &cwd_map,
+            |cwd| {
+                root_calls.fetch_add(1, Ordering::SeqCst);
+                find_project_root(cwd)
+            },
+            |root| {
+                framework_calls.fetch_add(1, Ordering::SeqCst);
+                detect_framework(root)
+            },
+        );
+
+        assert_eq!(processes.len(), 2);
+        assert_eq!(root_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(framework_calls.load(Ordering::SeqCst), 1);
+        fs::remove_dir_all(project).unwrap();
+    }
+
+    #[test]
+    fn non_dev_processes_skip_project_root_and_framework_detection() {
+        let project = temp_project("process-skip-framework");
+        fs::write(
+            project.join("package.json"),
+            r#"{"dependencies":{"vite":"latest"}}"#,
+        )
+        .unwrap();
+
+        let entries = vec![RawProcessEntry {
+            pid: 50,
+            process_name: "Spotify".to_string(),
+            cpu: 1.0,
+            mem_percent: 0.1,
+            rss_kb: 1024,
+            lstart: None,
+            command: "Spotify".to_string(),
+        }];
+        let cwd_map = std::collections::HashMap::from([(50, project.clone())]);
+        let root_calls = AtomicUsize::new(0);
+        let framework_calls = AtomicUsize::new(0);
+
+        let processes = enrich_process_entries_with_detectors(
+            entries,
+            &cwd_map,
+            |cwd| {
+                root_calls.fetch_add(1, Ordering::SeqCst);
+                find_project_root(cwd)
+            },
+            |root| {
+                framework_calls.fetch_add(1, Ordering::SeqCst);
+                detect_framework(root)
+            },
+        );
+
+        assert_eq!(processes.len(), 1);
+        assert_eq!(root_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(framework_calls.load(Ordering::SeqCst), 0);
+        fs::remove_dir_all(project).unwrap();
+    }
+
+    #[test]
+    fn process_index_caches_processinfo_by_pid() {
+        let processes = vec![
+            fake_process_info(42, "node", "node server.js"),
+            fake_process_info(50, "Spotify", "Spotify"),
+        ];
+
+        let index = build_process_index(&processes);
+
+        assert_eq!(index.len(), 2);
+        assert_eq!(index.get(&42).expect("pid 42 present").process_name, "node");
+        assert_eq!(
+            index.get(&50).expect("pid 50 present").process_name,
+            "Spotify"
+        );
+    }
+
+    #[test]
+    fn clean_detection_matches_node_reference_status_filter() {
+        let ports = vec![
+            port_with_status(3000, 30, ProcessStatus::Healthy),
+            port_with_status(3001, 31, ProcessStatus::Orphaned),
+            port_with_status(3002, 32, ProcessStatus::Zombie),
+        ];
+
+        let orphaned = find_orphaned_processes_with(|| ports.clone());
+
+        assert_eq!(orphaned.len(), 2);
+        assert_eq!(orphaned[0].port, 3001);
+        assert_eq!(orphaned[1].port, 3002);
+    }
+
     fn fake_port(port: u16, pid: u32) -> PortInfo {
+        port_with_status(port, pid, ProcessStatus::Healthy)
+    }
+
+    fn port_with_status(port: u16, pid: u32, status: ProcessStatus) -> PortInfo {
         PortInfo {
             port,
             pid,
@@ -206,10 +393,28 @@ mod tests {
             framework: None,
             uptime: None,
             start_time: None,
-            status: ProcessStatus::Healthy,
+            status,
             memory: None,
             git_branch: None,
             process_tree: Vec::new(),
+        }
+    }
+
+    fn fake_process_info(pid: u32, process_name: &str, command: &str) -> crate::model::ProcessInfo {
+        crate::model::ProcessInfo {
+            pid,
+            ppid: Some(1),
+            process_name: process_name.to_string(),
+            command: command.to_string(),
+            description: command.to_string(),
+            cpu: 1.0,
+            rss_kb: 1024,
+            memory: Some("1.0 MB".to_string()),
+            cwd: None,
+            project_name: None,
+            framework: None,
+            uptime: None,
+            status_raw: String::new(),
         }
     }
 

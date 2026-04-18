@@ -22,6 +22,18 @@
 
 迁移任务和兼容进度记录在 [task_checklist.md](task_checklist.md)。
 
+## 迁移说明
+
+`port-whisperer-rust` 是对原 `port-whisperer` Node.js 实现的 Rust 重写。
+
+重写目标：
+
+- 保持现有 CLI 的可见行为和交互语义尽量兼容
+- 在常用路径上减少脚本启动开销
+- 用原生二进制改善扫描、详情查询和 watch 场景的性能表现
+
+当前仓库仍保留对参考 Node 实现的对照测试和兼容性清单，用于持续验证 Rust 行为没有偏离已有用户预期。
+
 ## 效果示例
 
 ```text
@@ -85,6 +97,19 @@ whoisonport
 ```bash
 cargo install --path . --root /tmp/port-whisperer-install --force
 ```
+
+### 直接下载二进制
+
+当 release workflow 完成后，也可以直接下载对应平台的预构建二进制，并将其放入你的 `PATH`。
+
+推荐保留两个可执行文件名：
+
+```bash
+ports
+whoisonport
+```
+
+当前仓库还未发布正式预构建 release，发布方式完成后会在此处补充具体下载链接和平台矩阵。
 
 ## 命令用法
 
