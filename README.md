@@ -38,13 +38,7 @@ It provides two commands:
 
 ### npm
 
-The Rust build is packaged as:
-
-```bash
-ports-rs
-```
-
-Install the beta channel:
+Install the beta channel with npm:
 
 ```bash
 npm i -g ports-rs@next

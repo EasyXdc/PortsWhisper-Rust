@@ -38,13 +38,7 @@ Port Whisperer 主要解决这些问题：
 
 ### npm
 
-Rust 版本的 npm 包名为：
-
-```bash
-ports-rs
-```
-
-安装 beta 通道：
+通过 npm 安装 beta 通道：
 
 ```bash
 npm i -g ports-rs@next
