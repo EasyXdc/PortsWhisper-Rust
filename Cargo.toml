@@ -1,0 +1,19 @@
+[package]
+name = "port-whisperer"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+unicode-width = "0.2"
+
+[lib]
+name = "port_whisperer"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ports"
+path = "src/main.rs"
+
+[[bin]]
+name = "whoisonport"
+path = "src/bin/whoisonport.rs"
