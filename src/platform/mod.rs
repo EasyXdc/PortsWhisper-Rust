@@ -636,7 +636,15 @@ fn parse_unix_ps_details(line: &str) -> Option<(u32, RawProcessDetails)> {
 
 #[cfg(target_os = "linux")]
 fn linux_proc_name(pid: u32) -> String {
-    std::fs::read_to_string(format!("/proc/{pid}/comm"))
+    linux_proc_name_with(pid, |path| std::fs::read_to_string(path))
+}
+
+#[cfg(target_os = "linux")]
+fn linux_proc_name_with<ReadText>(pid: u32, read_comm: ReadText) -> String
+where
+    ReadText: Fn(String) -> std::io::Result<String>,
+{
+    read_comm(format!("/proc/{pid}/comm"))
         .map(|s| s.trim().to_string())
         .unwrap_or_else(|_| "unknown".to_string())
 }
@@ -652,16 +660,18 @@ fn linux_proc_details(pid: u32) -> Option<RawProcessDetails> {
 }
 
 #[cfg(target_os = "linux")]
-fn linux_proc_details_with<ReadText, ReadStatm, ReadBytes>(
+fn linux_proc_details_with<ReadText, ReadStatm, ReadBytes, ReadComm>(
     pid: u32,
     read_stat: ReadText,
     read_statm: ReadStatm,
     read_cmdline: ReadBytes,
+    read_comm: ReadComm,
 ) -> Option<RawProcessDetails>
 where
     ReadText: Fn(String) -> std::io::Result<String>,
     ReadStatm: Fn(String) -> std::io::Result<String>,
     ReadBytes: Fn(String) -> std::io::Result<Vec<u8>>,
+    ReadComm: Fn(String) -> std::io::Result<String>,
 {
     let stat_content = read_stat(format!("/proc/{pid}/stat")).ok();
     let (stat, ppid) = if let Some(stat_content) = stat_content {
@@ -691,11 +701,11 @@ where
                 .split(|b| *b == 0)
                 .filter(|s| !s.is_empty())
                 .map(|s| String::from_utf8_lossy(s).to_string())
-                .collect::<Vec<_>>()
-                .join(" ")
+        .collect::<Vec<_>>()
+        .join(" ")
         })
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| linux_proc_name(pid));
+        .unwrap_or_else(|| linux_proc_name_with(pid, read_comm));
     Some(RawProcessDetails {
         pid,
         ppid,
@@ -793,11 +803,29 @@ mod tests {
             |_| Err(Error::new(ErrorKind::PermissionDenied, "denied")),
             |_| Err(Error::new(ErrorKind::PermissionDenied, "denied")),
             |_| Err(Error::new(ErrorKind::PermissionDenied, "denied")),
+            |_| Err(Error::new(ErrorKind::PermissionDenied, "denied")),
         )
         .expect("linux proc details should still return fallback details");
 
         assert_eq!(details.pid, 42);
         assert_eq!(details.command, "unknown");
+        assert_eq!(details.rss_kb, 0);
+        assert_eq!(details.ppid, None);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_proc_details_uses_injected_comm_fallback_when_cmdline_is_unreadable() {
+        let details = linux_proc_details_with(
+            42,
+            |_| Err(Error::new(ErrorKind::PermissionDenied, "denied")),
+            |_| Err(Error::new(ErrorKind::PermissionDenied, "denied")),
+            |_| Err(Error::new(ErrorKind::PermissionDenied, "denied")),
+            |_| Ok("from-comm\n".to_string()),
+        )
+        .expect("linux proc details should still return fallback details");
+
+        assert_eq!(details.command, "from-comm");
         assert_eq!(details.rss_kb, 0);
         assert_eq!(details.ppid, None);
     }
