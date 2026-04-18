@@ -1,6 +1,6 @@
 {
   "name": "ports-rs",
-  "version": "0.1.0-beta.2",
+  "version": "0.1.0-beta.3",
   "description": "Rust-powered CLI for inspecting and managing listening ports",
   "license": "MIT",
   "repository": {
@@ -21,7 +21,8 @@
     "README.zh-CN.md"
   ],
   "scripts": {
-    "postinstall": "node scripts/postinstall.js"
+    "postinstall": "node scripts/postinstall.js",
+    "verify:release": "node scripts/verify-release.js"
   },
   "engines": {
     "node": ">=18"

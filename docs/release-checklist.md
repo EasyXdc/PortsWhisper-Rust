@@ -16,9 +16,9 @@ For the full first beta release procedure, see:
 
 ## 2. Tag & Release
 
-- Create a release tag such as `v0.1.0-beta.1` or `v0.1.0`
+- Create a release tag such as `v0.1.0-beta.3` or `v0.1.0`
 - Push the tag to GitHub
-- Wait for `.github/workflows/release.yml` to finish
+- Wait for `.github/workflows/release.yml` to finish `verify-release` and `publish-release`
 - Confirm the GitHub Release contains exactly these assets:
   - `ports-rs-darwin-arm64.tar.gz`
   - `ports-rs-darwin-x64.tar.gz`
@@ -35,19 +35,14 @@ For the full first beta release procedure, see:
   - `whoisonport.exe`
 - Run at least one extracted binary locally and confirm it starts
 
-## 4. npm Follow-up
+## 4. Approval & npm Publish
 
-The first version of the GitHub Actions workflow does not publish npm automatically.
-
-Manual npm steps:
-
-- Publish beta channel:
-  - `npm publish --tag next`
-- Verify installation:
-  - `npm i -g ports-rs@next`
-- Verify commands:
-  - `ports`
-  - `whoisonport 3000`
+- Open the Actions run for the release tag
+- Review the resolved npm dist-tag (`next` for beta, `latest` for stable)
+- Approve the `npm-publish` environment when the release assets look correct
+- Wait for `publish-npm` to finish
+- Verify npm metadata:
+  - `npm view ports-rs version dist-tags`
 
 ## 5. Final Sanity Check
 

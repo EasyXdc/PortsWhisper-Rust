@@ -5,6 +5,10 @@ const path = require("node:path");
 const os = require("node:os");
 const https = require("node:https");
 const { spawnSync } = require("node:child_process");
+const {
+  releaseTargetForPlatform,
+  expectedBinaryNames,
+} = require("./release-targets.js");
 
 const PACKAGE_ROOT = path.resolve(__dirname, "..");
 const VENDOR_DIR = path.join(PACKAGE_ROOT, "vendor");
@@ -13,18 +17,8 @@ const DEFAULT_BASE_URL =
   process.env.PORTS_RS_BASE_URL ||
   `https://github.com/EasyXdc/PortsWhisper-Rust/releases/download/${DEFAULT_TAG}`;
 
-const PLATFORM_MAP = {
-  "darwin-arm64": { asset: "ports-rs-darwin-arm64.tar.gz", archiveType: "tar.gz" },
-  "darwin-x64": { asset: "ports-rs-darwin-x64.tar.gz", archiveType: "tar.gz" },
-  "linux-x64": { asset: "ports-rs-linux-x64.tar.gz", archiveType: "tar.gz" },
-  "win32-x64": { asset: "ports-rs-windows-x64.zip", archiveType: "zip" }
-};
-
 function binaryNames() {
-  if (process.platform === "win32") {
-    return ["ports.exe", "whoisonport.exe"];
-  }
-  return ["ports", "whoisonport"];
+  return expectedBinaryNames(process.platform);
 }
 
 function ensureDir(dir) {
@@ -41,6 +35,10 @@ function fail(message) {
 
 function platformKey() {
   return `${process.platform}-${process.arch}`;
+}
+
+function platformTarget() {
+  return releaseTargetForPlatform(process.platform, process.arch);
 }
 
 function installSkipped() {
@@ -106,14 +104,14 @@ async function main() {
     return;
   }
 
-  const target = PLATFORM_MAP[platformKey()];
+  const target = platformTarget();
   if (!target) {
     fail(`unsupported platform ${platformKey()}`);
   }
 
   ensureDir(VENDOR_DIR);
-  const archivePath = path.join(os.tmpdir(), `${target.asset}`);
-  const assetUrl = `${DEFAULT_BASE_URL}/${target.asset}`;
+  const archivePath = path.join(os.tmpdir(), target.archive);
+  const assetUrl = `${DEFAULT_BASE_URL}/${target.archive}`;
 
   try {
     await download(assetUrl, archivePath);
@@ -135,7 +133,7 @@ async function main() {
     }
   }
 
-  console.log(`ports-rs postinstall: installed ${target.asset}`);
+  console.log(`ports-rs postinstall: installed ${target.archive}`);
 }
 
 main().catch((error) => fail(error.message));
