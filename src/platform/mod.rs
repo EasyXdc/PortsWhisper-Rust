@@ -656,6 +656,7 @@ fn linux_proc_details(pid: u32) -> Option<RawProcessDetails> {
         |path| std::fs::read_to_string(path),
         |path| std::fs::read_to_string(path),
         |path| std::fs::read(path),
+        |path| std::fs::read_to_string(path),
     )
 }
 
