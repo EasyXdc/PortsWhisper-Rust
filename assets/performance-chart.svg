@@ -1,0 +1,48 @@
+<svg width="1200" height="560" viewBox="0 0 1200 560" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1200" height="560" rx="28" fill="#0F172A"/>
+  <text x="64" y="72" fill="white" font-family="Arial, Helvetica, sans-serif" font-size="34" font-weight="800">Performance Snapshot</text>
+  <text x="64" y="106" fill="#94A3B8" font-family="Arial, Helvetica, sans-serif" font-size="18">Fresh local timings, 3 runs each, lower is better.</text>
+  <text x="64" y="148" fill="#E2E8F0" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="700">Node vs Rust release binary</text>
+
+  <text x="64" y="208" fill="#CBD5E1" font-family="Arial, Helvetica, sans-serif" font-size="18">ports</text>
+  <rect x="220" y="190" width="420" height="18" rx="9" fill="#1E293B"/>
+  <rect x="220" y="190" width="233" height="18" rx="9" fill="#94A3B8"/>
+  <text x="658" y="205" fill="#CBD5E1" font-family="Arial, Helvetica, sans-serif" font-size="16">Node avg 0.46s</text>
+  <rect x="220" y="216" width="420" height="18" rx="9" fill="#1E293B"/>
+  <rect x="220" y="216" width="100" height="18" rx="9" fill="#22C55E"/>
+  <text x="658" y="231" fill="#CBD5E1" font-family="Arial, Helvetica, sans-serif" font-size="16">Rust avg 0.19s</text>
+
+  <text x="64" y="282" fill="#CBD5E1" font-family="Arial, Helvetica, sans-serif" font-size="18">ports --all</text>
+  <rect x="220" y="264" width="420" height="18" rx="9" fill="#1E293B"/>
+  <rect x="220" y="264" width="227" height="18" rx="9" fill="#94A3B8"/>
+  <text x="658" y="279" fill="#CBD5E1" font-family="Arial, Helvetica, sans-serif" font-size="16">Node avg 0.45s</text>
+  <rect x="220" y="290" width="420" height="18" rx="9" fill="#1E293B"/>
+  <rect x="220" y="290" width="92" height="18" rx="9" fill="#22C55E"/>
+  <text x="658" y="305" fill="#CBD5E1" font-family="Arial, Helvetica, sans-serif" font-size="16">Rust avg 0.18s</text>
+
+  <text x="64" y="356" fill="#CBD5E1" font-family="Arial, Helvetica, sans-serif" font-size="18">ports ps</text>
+  <rect x="220" y="338" width="420" height="18" rx="9" fill="#1E293B"/>
+  <rect x="220" y="338" width="76" height="18" rx="9" fill="#94A3B8"/>
+  <text x="658" y="353" fill="#CBD5E1" font-family="Arial, Helvetica, sans-serif" font-size="16">Node avg 0.15s</text>
+  <rect x="220" y="364" width="420" height="18" rx="9" fill="#1E293B"/>
+  <rect x="220" y="364" width="49" height="18" rx="9" fill="#22C55E"/>
+  <text x="658" y="379" fill="#CBD5E1" font-family="Arial, Helvetica, sans-serif" font-size="16">Rust avg 0.10s</text>
+
+  <text x="64" y="430" fill="#CBD5E1" font-family="Arial, Helvetica, sans-serif" font-size="18">ports &lt;port&gt;</text>
+  <rect x="220" y="412" width="420" height="18" rx="9" fill="#1E293B"/>
+  <rect x="220" y="412" width="420" height="18" rx="9" fill="#94A3B8"/>
+  <text x="658" y="427" fill="#CBD5E1" font-family="Arial, Helvetica, sans-serif" font-size="16">Node avg 7.20s</text>
+  <rect x="220" y="438" width="420" height="18" rx="9" fill="#1E293B"/>
+  <rect x="220" y="438" width="5" height="18" rx="9" fill="#22C55E"/>
+  <text x="658" y="453" fill="#CBD5E1" font-family="Arial, Helvetica, sans-serif" font-size="16">Rust avg 0.09s</text>
+
+  <rect x="746" y="156" width="386" height="308" rx="22" fill="#111827" stroke="#243244"/>
+  <text x="806" y="208" fill="#E2E8F0" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="700">Highlights</text>
+  <text x="806" y="252" fill="#CBD5E1" font-family="Arial, Helvetica, sans-serif" font-size="18">• Rust is substantially faster on default port scans.</text>
+  <text x="806" y="290" fill="#CBD5E1" font-family="Arial, Helvetica, sans-serif" font-size="18">• Rust detail lookup is dramatically faster</text>
+  <text x="826" y="316" fill="#CBD5E1" font-family="Arial, Helvetica, sans-serif" font-size="18">for single-port inspection.</text>
+  <text x="806" y="356" fill="#CBD5E1" font-family="Arial, Helvetica, sans-serif" font-size="18">• ports ps now beats the Node reference</text>
+  <text x="826" y="382" fill="#CBD5E1" font-family="Arial, Helvetica, sans-serif" font-size="18">on this machine.</text>
+  <text x="806" y="424" fill="#94A3B8" font-family="Arial, Helvetica, sans-serif" font-size="16">Environment: local macOS development machine,</text>
+  <text x="806" y="448" fill="#94A3B8" font-family="Arial, Helvetica, sans-serif" font-size="16">3 runs each, Rust release binary.</text>
+</svg>

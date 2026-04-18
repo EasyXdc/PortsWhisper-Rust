@@ -1,0 +1,30 @@
+<svg width="1200" height="340" viewBox="0 0 1200 340" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1200" y2="340" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0F172A"/>
+      <stop offset="1" stop-color="#111827"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="120" y1="72" x2="640" y2="260" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#38BDF8"/>
+      <stop offset="1" stop-color="#22C55E"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="340" rx="28" fill="url(#bg)"/>
+  <circle cx="980" cy="84" r="86" fill="#1D4ED8" fill-opacity="0.18"/>
+  <circle cx="1080" cy="246" r="112" fill="#14B8A6" fill-opacity="0.12"/>
+  <rect x="72" y="64" width="118" height="36" rx="18" fill="#0B1220" stroke="#243244"/>
+  <text x="94" y="87" fill="#93C5FD" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700">CLI TOOL</text>
+  <text x="72" y="152" fill="white" font-family="Arial, Helvetica, sans-serif" font-size="54" font-weight="800">Port Whisperer</text>
+  <text x="72" y="198" fill="#CBD5E1" font-family="Arial, Helvetica, sans-serif" font-size="24">A fast Rust CLI for port discovery, process insight,</text>
+  <text x="72" y="228" fill="#CBD5E1" font-family="Arial, Helvetica, sans-serif" font-size="24">log access, and local dev cleanup.</text>
+  <text x="72" y="266" fill="#94A3B8" font-family="Arial, Helvetica, sans-serif" font-size="20">ports · whoisonport · logs · watch · clean · kill</text>
+  <rect x="72" y="290" width="260" height="10" rx="5" fill="#1E293B"/>
+  <rect x="72" y="290" width="210" height="10" rx="5" fill="url(#accent)"/>
+  <rect x="740" y="64" width="388" height="196" rx="20" fill="#0B1220" stroke="#243244"/>
+  <text x="790" y="116" fill="#E2E8F0" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700">Quick Snapshot</text>
+  <text x="790" y="152" fill="#38BDF8" font-family="Arial, Helvetica, sans-serif" font-size="18">:3000   node      Next.js</text>
+  <text x="790" y="182" fill="#34D399" font-family="Arial, Helvetica, sans-serif" font-size="18">:5173   node      Vite</text>
+  <text x="790" y="212" fill="#FBBF24" font-family="Arial, Helvetica, sans-serif" font-size="18">:5432   docker    PostgreSQL</text>
+  <text x="790" y="242" fill="#94A3B8" font-family="Arial, Helvetica, sans-serif" font-size="16">Run ports &lt;port&gt; for process, project,</text>
+  <text x="790" y="268" fill="#94A3B8" font-family="Arial, Helvetica, sans-serif" font-size="16">git branch, health status, and tree details.</text>
+</svg>

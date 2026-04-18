@@ -1,117 +1,141 @@
 # Port Whisperer
 
-`Port Whisperer` 是一个命令行工具，用来查看本机哪些进程正在监听端口，并尽量补全它们的进程、项目、框架、Docker、运行时间和状态信息。
+<p align="center">
+  <a href="./README.zh-CN.md">🇨🇳 中文文档: README.zh-CN.md</a>
+</p>
 
-安装后会提供两个命令：
+<p align="center">
+  <img src="./assets/hero.svg" alt="Port Whisperer Hero" width="100%" />
+</p>
+
+<p align="center">
+  <strong>🔎 Discover which process owns a port, inspect runtime details, tail logs, and watch local port activity from one CLI.</strong>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/CLI-Rust-0f172a?style=for-the-badge&logo=rust" alt="Rust CLI" />
+  <img src="https://img.shields.io/badge/npm-ports--rs-CB3837?style=for-the-badge&logo=npm" alt="npm package" />
+  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-2563eb?style=for-the-badge" alt="Platform support" />
+</p>
+
+## ✨ What It Does
+
+Port Whisperer helps you answer questions like:
+
+- Which process is listening on this port?
+- Is this a dev server, database, Docker container, or orphaned process?
+- Which project folder and framework does it belong to?
+- Can I inspect logs or kill it right away?
+
+It provides two commands:
 
 - `ports`
 - `whoisonport`
 
-其中：
+`whoisonport <port>` is simply a friendly alias for `ports <port>`.
 
-- `ports` 是主命令
-- `whoisonport <port>` 是 `ports <port>` 的等价别名
+## 🚀 Installation
 
-## 安装
+### npm
 
-### 方式一：npm
-
-首发 npm 包名为：
+The Rust build is packaged as:
 
 ```bash
 ports-rs
 ```
 
-Beta 版本安装：
+Install the beta channel:
 
 ```bash
 npm i -g ports-rs@next
 ```
 
-安装完成后会暴露：
+That exposes:
 
 ```bash
 ports
 whoisonport
 ```
 
-### 方式二：Cargo
+### Cargo
 
-如果你已经安装 Rust 工具链，也可以直接从仓库安装：
+If you already use Rust:
 
 ```bash
 cargo install --path .
 ```
 
-### 方式三：GitHub Releases
+### GitHub Releases
 
-也可以直接下载对应平台的预构建二进制，并将其放进你的 `PATH`。
+You can also download prebuilt binaries directly.
 
-当前 release 资产命名约定为：
+Current asset naming:
 
 - `ports-rs-darwin-arm64.tar.gz`
 - `ports-rs-darwin-x64.tar.gz`
 - `ports-rs-linux-x64.tar.gz`
 - `ports-rs-windows-x64.zip`
 
-压缩包内包含：
+Each archive contains:
 
 - `ports`
 - `whoisonport`
 
-Windows 下对应为：
+Windows archives contain:
 
 - `ports.exe`
 - `whoisonport.exe`
 
-## 快速开始
+## ⚡ Quick Start
 
-### 查看开发相关端口
+### Show development ports
 
 ```bash
 ports
 ```
 
-默认只显示开发相关进程，例如 Node.js、Python、Java、Rust、Docker、前端开发服务器和常见本地服务。桌面应用和系统服务会被过滤。
+By default, Port Whisperer focuses on development-related processes such as Node.js, Python, Java, Rust, Docker, frontend dev servers, and common local services.
 
-### 查看所有监听端口
+### Show all listening ports
 
 ```bash
 ports --all
 ports -a
 ```
 
-### 查看某个端口的详情
+### Inspect a specific port
 
 ```bash
 ports 3000
 whoisonport 3000
 ```
 
-详情页会显示：
+Detail view includes:
 
-- 端口
-- 进程名
+- port
+- process name
 - PID
-- 状态
-- 框架
-- 内存
-- 运行时间
-- 启动时间
-- 项目目录
-- 项目名
-- Git 分支
-- 进程树
+- health status
+- framework
+- memory usage
+- uptime
+- start time
+- working directory
+- project name
+- git branch
+- process tree
 
-如果该端口存在监听进程，详情页末尾会提示你是否直接终止它：
+If a listener exists, the detail view can prompt to terminate it:
 
 ```text
 Kill process on :3000? [y/N]
 ```
 
-只有输入 `y` 或 `Y` 才会执行终止。
+Only `y` or `Y` confirms the kill.
 
-### 查看进程列表
+## 🧰 Commands
+
+### Process list
 
 ```bash
 ports ps
@@ -119,51 +143,36 @@ ports ps --all
 ports ps -a
 ```
 
-`ports ps` 提供一个偏开发者视角的进程列表，显示：
+`ports ps` shows a developer-focused process table with:
 
 - PID
-- 进程名
+- process name
 - CPU%
-- 内存
-- 项目
-- 框架
-- 运行时间
-- 简短命令描述
+- memory
+- project
+- framework
+- uptime
+- summarized command
 
-默认只显示开发相关进程。`--all` 或 `-a` 会显示所有进程。
-
-## 终止进程
+### Kill listeners or processes
 
 ```bash
 ports kill 3000
 ports kill 3000 5173 8080
 ports kill 3000-3010
 ports kill 42872
-ports kill -f 3000
 ports kill --force 3000
 ```
 
-解析规则：
+Rules:
 
-- `1..=65535` 的数字先按端口解析
-- 如果端口没有监听进程，再尝试按 PID 解析
-- 大于 `65535` 的数字只按 PID 解析
-- `-f` 或 `--force` 会使用强制终止
-- 端口范围会展开为多个端口，范围内没有监听的端口只计入 summary，不逐个报错
+- numbers in `1..=65535` are interpreted as ports first
+- if no listener is found, they fall back to PID resolution
+- values above `65535` are treated as PID only
+- ranges expand into multiple ports
+- empty ports inside a range are summarized, not treated as hard errors
 
-示例：
-
-```text
-$ ports kill 3000-3005
-
-  Killing :3000 — node (PID 42872)
-  ✓ Sent SIGTERM to :3000 — node (PID 42872)
-  Killing :3001 — node (PID 95380)
-  ✓ Sent SIGTERM to :3001 — node (PID 95380)
-  Range summary: 2 killed, 4 empty
-```
-
-## 查看日志
+### Logs
 
 ```bash
 ports logs 3000
@@ -174,111 +183,119 @@ ports logs 3000 --lines=10
 ports logs 3000 --err
 ```
 
-日志发现逻辑：
+Port Whisperer tries to discover:
 
-- macOS / Linux 优先用 `lsof -p <pid>` 检查打开的文件描述符
-- Linux 在必要时回退到 `/proc/<pid>/fd`
-- 自动识别 stdout / stderr 重定向文件
-- 自动识别 `.log`、`/log/`、`/logs/`、`nohup.out`、`stdout`、`stderr` 等路径
-- 如果找不到日志文件，会回退到系统日志
+- redirected stdout/stderr files
+- `.log` / `logs/` / `nohup.out` style paths
+- system log fallbacks on macOS, Linux, and Windows
 
-系统日志回退：
-
-- macOS：`log show` / `log stream`
-- Linux：`journalctl`
-- Windows：PowerShell 事件日志命令
-
-## 清理孤儿或僵尸进程
+### Clean orphaned or zombie processes
 
 ```bash
 ports clean
 ```
 
-会扫描监听端口，找出状态为 `orphaned` 或 `zombie` 的开发进程，并在确认后尝试终止。
-
-## 监听端口变化
+### Watch port changes
 
 ```bash
 ports watch
 ```
 
-会持续监听端口新增和关闭事件。按 `Ctrl+C` 停止，退出时会打印：
+Press `Ctrl+C` to stop.
 
-```text
-Stopped watching.
-```
+## 🧱 Tech Stack
 
-## 平台支持
+| Layer | Tech |
+| --- | --- |
+| Core CLI | Rust |
+| Packaging | npm + Node.js install scripts |
+| macOS process discovery | `lsof` + `ps` + `log` |
+| Linux process discovery | `/proc` + `ss` / `netstat` + `ps` + `journalctl` |
+| Windows process discovery | `netstat` + `wmic` / PowerShell + `taskkill` |
 
-当前首发目标平台：
+## 📊 Performance
+
+<p align="center">
+  <img src="./assets/performance-chart.svg" alt="Performance comparison chart" width="100%" />
+</p>
+
+Fresh local measurements used in the chart:
+
+| Command | Node avg | Rust avg |
+| --- | ---: | ---: |
+| `ports` | `0.46s` | `0.19s` |
+| `ports --all` | `0.45s` | `0.18s` |
+| `ports ps` | `0.15s` | `0.10s` |
+| `ports <port>` | `7.20s` | `0.09s` |
+
+These figures come from fresh local runs on the current development machine. Exact timings will vary by OS, hardware, background processes, and Docker state.
+
+## 🖥️ Platform Support
+
+Current target release platforms:
 
 - macOS arm64
 - macOS x64
 - Linux x64
 - Windows x64
 
-当前平台实现策略：
+## 🔗 Reference
 
-- macOS：`lsof` + `ps` + `log`
-- Linux：`/proc` + `ss` / `netstat` + `ps` + `journalctl`
-- Windows：`netstat` + `wmic` / PowerShell + `taskkill`
+This Rust rewrite is based on the original project:
 
-## 兼容性说明
+- [LarsenCundric/port-whisperer](https://github.com/LarsenCundric/port-whisperer)
 
-这个 Rust 版本保持了与原有 `port-whisperer` CLI 尽量一致的公开行为，包括：
+The goal of this repository is to preserve the core CLI workflow and user-facing behavior while rebuilding the implementation in Rust.
 
-- 命令名
-- 参数形式
-- 常见输出字段
-- 交互提示
-- `whoisonport <port>` 兼容入口
+## ❓ FAQ
 
-## 常见问题
+### What is `whoisonport`?
 
-### npm 安装失败怎么办？
+It is just an alias for:
 
-如果 npm 安装时无法下载预构建二进制，可以：
+```bash
+ports <port>
+```
 
-1. 去 GitHub Releases 手动下载对应平台二进制
-2. 在仓库中执行：
+### npm install failed. What now?
+
+You can:
+
+1. download the matching binary from GitHub Releases manually
+2. install directly from source:
 
 ```bash
 cargo install --path .
 ```
 
-### 为什么有些进程没有目录、项目或 Git 分支？
+### Why are some fields empty?
 
-这些字段依赖系统权限、进程可见性以及 cwd / 项目根目录探测。某些系统进程、沙箱进程或权限受限进程可能无法补全这些信息。
+Directory, project, framework, and git branch information depend on system visibility, permissions, cwd discovery, and project-root detection. Some system or sandboxed processes cannot expose all metadata.
 
-### 为什么默认看不到某些端口？
+### Why doesn't the default view show every port?
 
-默认 `ports` 只显示开发相关进程。使用：
+The default `ports` command is intentionally filtered for development-related processes. Use:
 
 ```bash
 ports --all
 ```
 
-可以显示所有监听端口。
+to see everything.
 
-## 从源码构建
+## 🔧 Development
 
 ```bash
 cargo build
+cargo test
 ```
 
-运行：
+Run locally:
 
 ```bash
 cargo run --bin ports
 cargo run --bin whoisonport -- 3000
 ```
 
-测试：
-
-```bash
-cargo test
-```
-
-## 许可证
+## 📄 License
 
 [MIT](LICENSE)

@@ -13,10 +13,12 @@
     "whoisonport": "bin/whoisonport.js"
   },
   "files": [
+    "assets",
     "bin",
     "scripts",
     "vendor",
-    "README.md"
+    "README.md",
+    "README.zh-CN.md"
   ],
   "scripts": {
     "postinstall": "node scripts/postinstall.js"
