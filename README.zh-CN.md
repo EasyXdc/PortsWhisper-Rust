@@ -38,7 +38,7 @@ Port Whisperer 主要解决这些问题：
 
 ### npm
 
-通过 npm 安装 beta 通道：
+通过 npm 安装 ：
 
 ```bash
 npm i -g ports-rs@next

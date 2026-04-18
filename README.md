@@ -38,7 +38,7 @@ It provides two commands:
 
 ### npm
 
-Install the beta channel with npm:
+ npm:
 
 ```bash
 npm i -g ports-rs@next
