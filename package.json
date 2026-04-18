@@ -5,9 +5,9 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/easyxdc/port-whisperer-rust.git"
+    "url": "git+https://github.com/EasyXdc/PortsWhisper-Rust.git"
   },
-  "homepage": "https://github.com/easyxdc/port-whisperer-rust",
+  "homepage": "https://github.com/EasyXdc/PortsWhisper-Rust",
   "bin": {
     "ports": "bin/ports.js",
     "whoisonport": "bin/whoisonport.js"
