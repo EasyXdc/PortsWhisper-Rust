@@ -1,5 +1,7 @@
 # First Beta Release Runbook
 
+> Historical note: this document describes the first beta release flow and is kept for reference only. Stable releases should follow `docs/release-checklist.md` and the current stable release process.
+
 This runbook is the step-by-step operating guide for publishing the first beta release of `port-whisperer-rust` and the matching `ports-rs` npm package.
 
 Use this document when releasing versions like:

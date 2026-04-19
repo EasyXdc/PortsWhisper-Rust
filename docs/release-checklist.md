@@ -1,8 +1,8 @@
 # Release Checklist
 
-This checklist is for publishing `port-whisperer-rust` release assets and then following up with the `ports-rs` npm package.
+This checklist is for publishing the stable `port-whisperer-rust` release assets and the matching `ports-rs` npm package.
 
-For the full first beta release procedure, see:
+For the historical first beta release procedure, see:
 
 - `docs/first-beta-release-runbook.md`
 
@@ -16,7 +16,7 @@ For the full first beta release procedure, see:
 
 ## 2. Tag & Release
 
-- Create a release tag such as `v0.1.0-beta.3` or `v0.1.0`
+- Create a release tag such as `v0.1.0` or `v0.1.1`
 - Push the tag to GitHub
 - Wait for `.github/workflows/release.yml` to finish `verify-release` and `publish-release`
 - Confirm the GitHub Release contains exactly these assets:
@@ -38,7 +38,7 @@ For the full first beta release procedure, see:
 ## 4. Approval & npm Publish
 
 - Open the Actions run for the release tag
-- Review the resolved npm dist-tag (`next` for beta, `latest` for stable)
+- Review the resolved npm dist-tag (`latest` for stable, `next` only for prerelease builds)
 - Approve the `npm-publish` environment when the release assets look correct
 - Wait for `publish-npm` to finish
 - Verify npm metadata:

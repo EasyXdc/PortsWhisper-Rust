@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  verify:
+    name: Verify core checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Run Rust tests
+        run: cargo test
+
+      - name: Pack npm tarball
+        run: npm pack
+
+      - name: Verify postinstall skip path
+        run: PORTS_RS_SKIP_DOWNLOAD=1 node scripts/postinstall.js
