@@ -38,10 +38,8 @@ It provides two commands:
 
 ### npm
 
- npm:
-
 ```bash
-npm i -g ports-rs@next
+npm i -g ports-rs
 ```
 
 That exposes:
@@ -50,6 +48,8 @@ That exposes:
 ports
 whoisonport
 ```
+
+If you want to test a future prerelease build later, use the `next` dist-tag explicitly.
 
 ### Cargo
 

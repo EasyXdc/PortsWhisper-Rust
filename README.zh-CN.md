@@ -38,10 +38,8 @@ Port Whisperer 主要解决这些问题：
 
 ### npm
 
-通过 npm 安装 ：
-
 ```bash
-npm i -g ports-rs@next
+npm i -g ports-rs
 ```
 
 安装后会暴露：
@@ -50,6 +48,8 @@ npm i -g ports-rs@next
 ports
 whoisonport
 ```
+
+如果未来需要体验预发布版本，再显式使用 `next` dist-tag。
 
 ### Cargo
 

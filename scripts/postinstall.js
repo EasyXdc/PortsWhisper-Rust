@@ -12,7 +12,7 @@ const {
 
 const PACKAGE_ROOT = path.resolve(__dirname, "..");
 const VENDOR_DIR = path.join(PACKAGE_ROOT, "vendor");
-const DEFAULT_TAG = process.env.PORTS_RS_RELEASE_TAG || "v0.1.0-beta.1";
+const DEFAULT_TAG = process.env.PORTS_RS_RELEASE_TAG || "v0.1.0";
 const DEFAULT_BASE_URL =
   process.env.PORTS_RS_BASE_URL ||
   `https://github.com/EasyXdc/PortsWhisper-Rust/releases/download/${DEFAULT_TAG}`;
