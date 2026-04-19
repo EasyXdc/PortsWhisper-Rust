@@ -1,26 +1,115 @@
 use std::ffi::OsStr;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use unicode_width::UnicodeWidthChar;
+use wait_timeout::ChildExt;
 
-pub fn run_output<S, I, A>(program: S, args: I, timeout_hint: Option<u64>) -> Option<String>
+use crate::error::{PortError, verbose_log_port_error};
+
+pub fn run_output<S, I, A>(
+    program: S,
+    args: I,
+    timeout: Option<Duration>,
+) -> Result<String, PortError>
 where
     S: AsRef<OsStr>,
     I: IntoIterator<Item = A>,
     A: AsRef<OsStr>,
 {
-    let _ = timeout_hint;
-    let out = Command::new(program)
-        .args(args)
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
-    if !out.status.success() && out.stdout.is_empty() {
-        return None;
+    let program = program.as_ref().to_os_string();
+    let args: Vec<std::ffi::OsString> = args
+        .into_iter()
+        .map(|a| a.as_ref().to_os_string())
+        .collect();
+    let result = run_output_impl(program, args, timeout);
+    if let Err(ref e) = result {
+        verbose_log_port_error(e);
     }
-    Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    result
+}
+
+fn run_output_impl(
+    program: std::ffi::OsString,
+    args: Vec<std::ffi::OsString>,
+    timeout: Option<Duration>,
+) -> Result<String, PortError> {
+    let cmd_str = format_cmd(&program, &args);
+    let program_name = program.to_string_lossy().to_string();
+
+    let mut child = Command::new(&program)
+        .args(&args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| classify_spawn_error(e, &program_name))?;
+
+    let stdout_handle = child.stdout.take();
+    let stderr_handle = child.stderr.take();
+
+    let stdout_reader = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(mut s) = stdout_handle {
+            let _ = s.read_to_end(&mut buf);
+        }
+        buf
+    });
+    let stderr_reader = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(mut s) = stderr_handle {
+            let _ = s.read_to_end(&mut buf);
+        }
+        buf
+    });
+
+    let status = match timeout {
+        Some(d) => match child.wait_timeout(d).map_err(PortError::Io)? {
+            Some(s) => s,
+            None => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(PortError::Timeout {
+                    cmd: cmd_str,
+                    ms: d.as_millis() as u64,
+                });
+            }
+        },
+        None => child.wait().map_err(PortError::Io)?,
+    };
+
+    let stdout = stdout_reader.join().unwrap_or_default();
+    let stderr = stderr_reader.join().unwrap_or_default();
+    let stdout_str = String::from_utf8_lossy(&stdout).trim().to_string();
+    let stderr_str = String::from_utf8_lossy(&stderr).trim().to_string();
+
+    if status.success() || !stdout_str.is_empty() {
+        Ok(stdout_str)
+    } else {
+        Err(PortError::ExecFailed {
+            cmd: cmd_str,
+            exit: status.code().unwrap_or(-1),
+            stderr: stderr_str,
+        })
+    }
+}
+
+fn classify_spawn_error(e: std::io::Error, program: &str) -> PortError {
+    match e.kind() {
+        std::io::ErrorKind::NotFound => PortError::CommandMissing(program.to_string()),
+        std::io::ErrorKind::PermissionDenied => PortError::PermissionDenied(program.to_string()),
+        _ => PortError::Io(e),
+    }
+}
+
+fn format_cmd(program: &OsStr, args: &[std::ffi::OsString]) -> String {
+    let mut s = program.to_string_lossy().to_string();
+    for arg in args {
+        s.push(' ');
+        s.push_str(&arg.to_string_lossy());
+    }
+    s
 }
 
 pub fn command_exists(cmd: &str) -> bool {
@@ -31,7 +120,7 @@ pub fn command_exists(cmd: &str) -> bool {
         .stderr(Stdio::null())
         .status()
         .is_ok()
-        || run_output("which", [cmd], None).is_some()
+        || run_output("which", [cmd], None).is_ok()
 }
 
 pub fn format_memory(rss_kb: u64) -> String {
@@ -188,8 +277,9 @@ pub fn prompt_line(prompt: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::PortError;
     use std::fs;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     #[test]
     fn memory_format_uses_reference_thresholds() {
@@ -227,6 +317,92 @@ mod tests {
     fn truncation_uses_visible_width_for_wide_unicode() {
         assert_eq!(truncate_visible("表表表A", 5), "表表…");
         assert_eq!(truncate_visible("表A", 3), "表A");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_output_returns_ok_for_successful_command() {
+        let out = run_output("echo", ["hello"], None).expect("should succeed");
+        assert_eq!(out, "hello");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_output_reports_command_missing_for_nonexistent_binary() {
+        let err = run_output(
+            "definitely-not-a-real-command-xyz",
+            ["arg"],
+            None,
+        )
+        .expect_err("should fail");
+        assert!(matches!(err, PortError::CommandMissing(_)));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_output_err_writes_to_verbose_log_when_enabled() {
+        use crate::error::{
+            drain_verbose_log, set_verbose_enabled, verbose_test_lock,
+        };
+        let _guard = verbose_test_lock().lock().unwrap();
+        set_verbose_enabled(true);
+        drain_verbose_log();
+
+        let _ = run_output("definitely-not-a-real-command-xyz-2", ["arg"], None);
+        let drained = drain_verbose_log();
+        set_verbose_enabled(false);
+
+        assert!(
+            drained.iter().any(|m| m.contains("not found")
+                && m.contains("definitely-not-a-real-command-xyz-2")),
+            "verbose log should capture full PortError message, got {drained:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_output_err_does_not_accumulate_when_verbose_disabled() {
+        use crate::error::{
+            drain_verbose_log, set_verbose_enabled, verbose_test_lock,
+        };
+        let _guard = verbose_test_lock().lock().unwrap();
+        set_verbose_enabled(false);
+        drain_verbose_log();
+
+        let _ = run_output("definitely-not-a-real-command-xyz-3", ["arg"], None);
+        assert!(drain_verbose_log().is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_output_times_out_and_kills_child() {
+        let start = Instant::now();
+        let result = run_output("sleep", ["10"], Some(Duration::from_millis(200)));
+        let elapsed = start.elapsed();
+        assert!(
+            matches!(result, Err(PortError::Timeout { .. })),
+            "expected Timeout, got {:?}",
+            result
+        );
+        assert!(
+            elapsed < Duration::from_millis(1500),
+            "timeout did not terminate child promptly: {:?}",
+            elapsed
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_output_reports_exec_failed_on_nonzero_exit_with_no_stdout() {
+        let err = run_output("sh", ["-c", "echo oops >&2; exit 3"], None)
+            .expect_err("should fail");
+        match err {
+            PortError::ExecFailed { exit, stderr, .. } => {
+                assert_eq!(exit, 3);
+                assert!(stderr.contains("oops"), "stderr={stderr:?}");
+            }
+            other => panic!("expected ExecFailed, got {other:?}"),
+        }
     }
 
     fn temp_dir(label: &str) -> std::path::PathBuf {

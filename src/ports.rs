@@ -243,8 +243,9 @@ fn git_branch(root: &Path) -> Option<String> {
             "--abbrev-ref",
             "HEAD",
         ],
-        Some(3000),
+        Some(std::time::Duration::from_millis(3000)),
     )
+    .ok()
     .filter(|s| !s.is_empty() && s != "HEAD")
 }
 

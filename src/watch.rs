@@ -6,6 +6,7 @@ use crate::platform::{self, PlatformScanner};
 use crate::ports;
 use crate::style;
 use std::collections::HashMap;
+use std::sync::Once;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
@@ -198,26 +199,14 @@ fn sleep_interruptibly(duration: Duration) {
     }
 }
 
-#[cfg(unix)]
 fn install_sigint_handler() {
     STOP_REQUESTED.store(false, Ordering::SeqCst);
-
-    unsafe extern "C" {
-        fn signal(sig: i32, handler: extern "C" fn(i32)) -> extern "C" fn(i32);
-    }
-
-    extern "C" fn handle_sigint(_: i32) {
-        STOP_REQUESTED.store(true, Ordering::SeqCst);
-    }
-
-    unsafe {
-        signal(2, handle_sigint);
-    }
-}
-
-#[cfg(not(unix))]
-fn install_sigint_handler() {
-    STOP_REQUESTED.store(false, Ordering::SeqCst);
+    static INSTALLED: Once = Once::new();
+    INSTALLED.call_once(|| {
+        let _ = ctrlc::set_handler(|| {
+            STOP_REQUESTED.store(true, Ordering::SeqCst);
+        });
+    });
 }
 
 #[cfg(test)]

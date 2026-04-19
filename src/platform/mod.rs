@@ -5,6 +5,7 @@ use crate::util::{basename, run_output};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Command;
+use std::time::Duration;
 
 #[cfg(target_os = "linux")]
 pub mod linux;
@@ -120,7 +121,13 @@ impl PlatformScanner for UnsupportedScanner {
 
 fn darwin_listening_ports_raw() -> Vec<RawPortEntry> {
     darwin_listening_ports_from_output(
-        run_output("lsof", ["-iTCP", "-sTCP:LISTEN", "-P", "-n"], Some(10_000)).unwrap_or_default(),
+        run_output(
+            "lsof",
+            ["-iTCP", "-sTCP:LISTEN", "-P", "-n"],
+            Some(Duration::from_millis(10_000)),
+        )
+        .ok()
+        .unwrap_or_default(),
     )
 }
 
@@ -157,8 +164,9 @@ fn darwin_listening_port_raw(port: u16) -> Option<RawPortEntry> {
         run_output(
             "lsof",
             [&format!("-iTCP:{port}"), "-sTCP:LISTEN", "-P", "-n"],
-            Some(10_000),
+            Some(Duration::from_millis(10_000)),
         )
+        .ok()
         .unwrap_or_default(),
     )
     .into_iter()
@@ -174,7 +182,7 @@ fn linux_listening_ports_raw() -> Vec<RawPortEntry> {
     let mut entries = Vec::new();
     let mut seen = HashMap::new();
     if command_exists("ss") {
-        if let Some(raw) = run_output("ss", ["-tlnp"], Some(10_000)) {
+        if let Ok(raw) = run_output("ss", ["-tlnp"], Some(Duration::from_millis(10_000))) {
             for line in raw.lines().skip(1) {
                 let parts: Vec<&str> = line.split_whitespace().collect();
                 if parts.len() < 5 {
@@ -203,7 +211,7 @@ fn linux_listening_ports_raw() -> Vec<RawPortEntry> {
     }
 
     if entries.is_empty() && command_exists("netstat") {
-        if let Some(raw) = run_output("netstat", ["-tlnp"], Some(10_000)) {
+        if let Ok(raw) = run_output("netstat", ["-tlnp"], Some(Duration::from_millis(10_000))) {
             for line in raw.lines() {
                 if !line.contains("LISTEN") {
                     continue;
@@ -343,7 +351,9 @@ fn linux_pid_socket_inodes(pid: u32) -> Option<Vec<(u64, String)>> {
 
 #[cfg(target_os = "windows")]
 fn windows_listening_ports_raw() -> Vec<RawPortEntry> {
-    let raw = run_output("netstat", ["-ano", "-p", "TCP"], Some(10_000)).unwrap_or_default();
+    let raw = run_output("netstat", ["-ano", "-p", "TCP"], Some(Duration::from_millis(10_000)))
+        .ok()
+        .unwrap_or_default();
     let mut entries = Vec::new();
     let mut seen = HashMap::new();
     for line in raw.lines().filter(|l| l.contains("LISTENING")) {
@@ -391,8 +401,9 @@ fn unix_batch_process_info(pids: &[u32]) -> HashMap<u32, RawProcessDetails> {
             "-o",
             "pid=,ppid=,stat=,rss=,lstart=,command=",
         ],
-        Some(5000),
+        Some(Duration::from_millis(5000)),
     )
+    .ok()
     .unwrap_or_default();
     for line in raw.lines() {
         if let Some((pid, details)) = parse_unix_ps_details(line) {
@@ -422,8 +433,9 @@ fn unix_process_details(pid: u32) -> Option<RawProcessDetails> {
             "-o",
             "pid=,ppid=,stat=,rss=,lstart=,command=",
         ],
-        Some(5000),
-    )?;
+        Some(Duration::from_millis(5000)),
+    )
+    .ok()?;
     raw.lines()
         .find_map(|line| parse_unix_ps_details(line).map(|(_, details)| details))
 }
@@ -458,8 +470,13 @@ fn darwin_batch_cwd(pids: &[u32]) -> HashMap<u32, PathBuf> {
         .map(u32::to_string)
         .collect::<Vec<_>>()
         .join(",");
-    let raw =
-        run_output("lsof", ["-a", "-d", "cwd", "-p", &pid_list], Some(10_000)).unwrap_or_default();
+    let raw = run_output(
+        "lsof",
+        ["-a", "-d", "cwd", "-p", &pid_list],
+        Some(Duration::from_millis(10_000)),
+    )
+    .ok()
+    .unwrap_or_default();
     for line in raw.lines().skip(1) {
         let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.len() < 9 {
@@ -501,14 +518,14 @@ where
 fn windows_batch_cwd(pids: &[u32]) -> HashMap<u32, PathBuf> {
     let mut map = HashMap::new();
     for pid in pids {
-        if let Some(path) = run_output(
+        if let Ok(path) = run_output(
             "powershell",
             [
                 "-NoProfile",
                 "-Command",
                 &format!("(Get-Process -Id {pid} -ErrorAction SilentlyContinue).Path | Split-Path"),
             ],
-            Some(5000),
+            Some(Duration::from_millis(5000)),
         ) {
             if !path.trim().is_empty() {
                 map.insert(*pid, PathBuf::from(path));
@@ -522,8 +539,9 @@ fn unix_all_processes_raw() -> Vec<RawProcessEntry> {
     let raw = run_output(
         "ps",
         ["-eo", "pid=,pcpu=,pmem=,rss=,lstart=,command="],
-        Some(5000),
+        Some(Duration::from_millis(5000)),
     )
+    .ok()
     .unwrap_or_default();
     let current_pid = std::process::id();
     let mut entries = Vec::new();
@@ -569,8 +587,9 @@ fn unix_process_tree(pid: u32) -> Vec<ProcessTreeNode> {
         run_output(
             "ps",
             ["-p", &target_pid.to_string(), "-o", "pid=,ppid=,comm="],
-            Some(5000),
+            Some(Duration::from_millis(5000)),
         )
+        .ok()
     })
 }
 
@@ -726,8 +745,9 @@ fn windows_process_name(pid: u32) -> Option<String> {
             "-Command",
             &format!("(Get-Process -Id {pid} -ErrorAction SilentlyContinue).ProcessName"),
         ],
-        Some(3000),
-    )?;
+        Some(Duration::from_millis(3000)),
+    )
+    .ok()?;
     if out.is_empty() {
         None
     } else {

@@ -1,4 +1,5 @@
 use crate::display;
+use crate::error;
 use crate::kill;
 use crate::logs;
 use crate::scanner;
@@ -9,6 +10,7 @@ use crate::watch;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ParsedCli {
     pub show_all: bool,
+    pub verbose: bool,
     pub command: CliCommand,
 }
 
@@ -27,7 +29,23 @@ pub enum CliCommand {
 
 pub fn run(_binary_name: &str, args: Vec<String>) -> i32 {
     let parsed = parse_args(&args);
+    error::set_verbose_enabled(parsed.verbose);
+    let exit_code = dispatch(parsed);
+    if error::verbose_enabled() {
+        let entries = error::drain_verbose_log();
+        if !entries.is_empty() {
+            eprintln!();
+            eprintln!("  verbose log ({} entries):", entries.len());
+            for entry in entries {
+                eprintln!("    {entry}");
+            }
+        }
+        error::set_verbose_enabled(false);
+    }
+    exit_code
+}
 
+fn dispatch(parsed: ParsedCli) -> i32 {
     match parsed.command {
         CliCommand::List => {
             let mut ports = scanner::get_listening_ports(false);
@@ -103,9 +121,13 @@ pub fn run(_binary_name: &str, args: Vec<String>) -> i32 {
 
 pub fn parse_args(args: &[String]) -> ParsedCli {
     let show_all = args.iter().any(|a| a == "--all" || a == "-a");
+    let verbose = args.iter().any(|a| a == "--verbose");
     let filtered_args: Vec<String> = args
         .iter()
-        .filter(|a| a.as_str() != "--all" && a.as_str() != "-a")
+        .filter(|a| {
+            let s = a.as_str();
+            s != "--all" && s != "-a" && s != "--verbose"
+        })
         .cloned()
         .collect();
     let command = match filtered_args.first().map(String::as_str) {
@@ -121,7 +143,11 @@ pub fn parse_args(args: &[String]) -> ParsedCli {
             .map(CliCommand::PortDetail)
             .unwrap_or_else(|_| CliCommand::Unknown(other.to_string())),
     };
-    ParsedCli { show_all, command }
+    ParsedCli {
+        show_all,
+        verbose,
+        command,
+    }
 }
 
 fn run_port_detail(port: u32) -> i32 {
@@ -172,6 +198,7 @@ mod tests {
             parse_args(&args(&[])),
             ParsedCli {
                 show_all: false,
+                verbose: false,
                 command: CliCommand::List
             }
         );
@@ -193,6 +220,7 @@ mod tests {
             parse_args(&args(&["--all"])),
             ParsedCli {
                 show_all: true,
+                verbose: false,
                 command: CliCommand::List
             }
         );
@@ -200,6 +228,7 @@ mod tests {
             parse_args(&args(&["ps", "-a"])),
             ParsedCli {
                 show_all: true,
+                verbose: false,
                 command: CliCommand::Ps
             }
         );
@@ -207,9 +236,28 @@ mod tests {
             parse_args(&args(&["kill", "--all", "3000"])),
             ParsedCli {
                 show_all: true,
+                verbose: false,
                 command: CliCommand::Kill(args(&["3000"]))
             }
         );
+    }
+
+    #[test]
+    fn recognizes_verbose_flag_globally_and_filters_it_out() {
+        let parsed = parse_args(&args(&["--verbose"]));
+        assert!(parsed.verbose);
+        assert_eq!(parsed.command, CliCommand::List);
+
+        let parsed = parse_args(&args(&["ps", "--verbose", "--all"]));
+        assert!(parsed.verbose);
+        assert!(parsed.show_all);
+        assert_eq!(parsed.command, CliCommand::Ps);
+
+        let parsed = parse_args(&args(&["kill", "--verbose", "3000"]));
+        assert!(parsed.verbose);
+        assert_eq!(parsed.command, CliCommand::Kill(args(&["3000"])));
+
+        assert!(!parse_args(&args(&["ps"])).verbose);
     }
 
     #[test]

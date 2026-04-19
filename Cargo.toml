@@ -4,7 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+ctrlc = "3"
 unicode-width = "0.2"
+wait-timeout = "0.2"
 
 [lib]
 name = "port_whisperer"

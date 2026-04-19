@@ -191,7 +191,11 @@ fn parse_logs_request(args: &[String]) -> LogsRequest {
 pub fn get_process_log_files(pid: u32) -> Vec<LogFile> {
     let mut files = Vec::new();
     if cfg!(target_os = "macos") || cfg!(target_os = "linux") {
-        if let Some(raw) = run_output("lsof", ["-p", &pid.to_string()], Some(5000)) {
+        if let Ok(raw) = run_output(
+            "lsof",
+            ["-p", &pid.to_string()],
+            Some(std::time::Duration::from_millis(5000)),
+        ) {
             for line in raw.lines().skip(1) {
                 let cols: Vec<&str> = line.split_whitespace().collect();
                 if cols.len() < 9 {
@@ -358,8 +362,9 @@ fn get_process_cwd(pid: u32) -> Option<PathBuf> {
         run_output(
             "lsof",
             ["-p", &pid.to_string(), "-d", "cwd", "-Fn"],
-            Some(3000),
+            Some(std::time::Duration::from_millis(3000)),
         )
+        .ok()
         .and_then(|raw| {
             raw.lines()
                 .find(|l| l.starts_with('n'))
@@ -372,8 +377,9 @@ fn get_process_cwd(pid: u32) -> Option<PathBuf> {
                 "-Command",
                 &format!("(Get-Process -Id {pid}).Path | Split-Path"),
             ],
-            Some(5000),
+            Some(std::time::Duration::from_millis(5000)),
         )
+        .ok()
         .filter(|s| !s.is_empty())
         .map(PathBuf::from)
     } else {
