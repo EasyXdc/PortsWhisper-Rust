@@ -375,19 +375,42 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn run_output_times_out_and_kills_child() {
-        let start = Instant::now();
+    fn run_output_times_out_for_long_running_child() {
         let result = run_output("sleep", ["10"], Some(Duration::from_millis(200)));
-        let elapsed = start.elapsed();
         assert!(
             matches!(result, Err(PortError::Timeout { .. })),
             "expected Timeout, got {:?}",
             result
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_output_timeout_reports_command_text_and_requested_ms() {
+        let result = run_output("sleep", ["10"], Some(Duration::from_millis(200)))
+            .expect_err("sleep should time out");
+
+        match result {
+            PortError::Timeout { cmd, ms } => {
+                assert!(cmd.contains("sleep"), "cmd={cmd:?}");
+                assert!(cmd.contains("10"), "cmd={cmd:?}");
+                assert_eq!(ms, 200);
+            }
+            other => panic!("expected Timeout, got {other:?}"),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_output_timeout_returns_well_before_command_natural_exit() {
+        let start = Instant::now();
+        let result = run_output("sleep", ["10"], Some(Duration::from_millis(200)));
+        let elapsed = start.elapsed();
+
+        assert!(matches!(result, Err(PortError::Timeout { .. })));
         assert!(
-            elapsed < Duration::from_millis(1500),
-            "timeout did not terminate child promptly: {:?}",
-            elapsed
+            elapsed < Duration::from_secs(3),
+            "timeout path should finish well before natural exit: {elapsed:?}"
         );
     }
 

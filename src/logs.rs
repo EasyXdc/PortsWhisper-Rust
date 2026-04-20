@@ -1,9 +1,10 @@
+use crate::error::PortError;
 use crate::model::{KillResolutionKind, LogFdKind, LogFile};
 use crate::scanner;
 use crate::style;
 use crate::util::{prompt_line, run_output};
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 struct LogsRequest {
@@ -191,40 +192,12 @@ fn parse_logs_request(args: &[String]) -> LogsRequest {
 pub fn get_process_log_files(pid: u32) -> Vec<LogFile> {
     let mut files = Vec::new();
     if cfg!(target_os = "macos") || cfg!(target_os = "linux") {
-        if let Ok(raw) = run_output(
+        files.extend(log_files_from_lsof_result(run_output(
             "lsof",
             ["-p", &pid.to_string()],
             Some(std::time::Duration::from_millis(5000)),
-        ) {
-            for line in raw.lines().skip(1) {
-                let cols: Vec<&str> = line.split_whitespace().collect();
-                if cols.len() < 9 {
-                    continue;
-                }
-                let fd = cols[3];
-                let kind = cols[4];
-                let name = cols[8..].join(" ");
-                if (fd == "1w" || fd == "2w") && kind == "REG" {
-                    files.push(LogFile {
-                        path: PathBuf::from(name),
-                        fd: if fd == "1w" {
-                            LogFdKind::Stdout
-                        } else {
-                            LogFdKind::Stderr
-                        },
-                        kind: "redirect".to_string(),
-                        priority: 1,
-                    });
-                } else if kind == "REG" && fd.ends_with('w') && is_log_like_path(&name) {
-                    files.push(LogFile {
-                        path: PathBuf::from(name),
-                        fd: LogFdKind::File,
-                        kind: "logfile".to_string(),
-                        priority: 2,
-                    });
-                }
-            }
-        } else if cfg!(target_os = "linux") {
+        )));
+        if files.is_empty() && cfg!(target_os = "linux") {
             let fd_dir = PathBuf::from(format!("/proc/{pid}/fd"));
             if let Ok(entries) = std::fs::read_dir(fd_dir) {
                 for entry in entries.flatten() {
@@ -359,17 +332,11 @@ fn get_process_cwd(pid: u32) -> Option<PathBuf> {
     if cfg!(target_os = "linux") {
         std::fs::read_link(format!("/proc/{pid}/cwd")).ok()
     } else if cfg!(target_os = "macos") {
-        run_output(
+        get_process_cwd_from_lsof_result(run_output(
             "lsof",
             ["-p", &pid.to_string(), "-d", "cwd", "-Fn"],
             Some(std::time::Duration::from_millis(3000)),
-        )
-        .ok()
-        .and_then(|raw| {
-            raw.lines()
-                .find(|l| l.starts_with('n'))
-                .map(|l| PathBuf::from(&l[1..]))
-        })
+        ))
     } else if cfg!(target_os = "windows") {
         run_output(
             "powershell",
@@ -385,6 +352,47 @@ fn get_process_cwd(pid: u32) -> Option<PathBuf> {
     } else {
         None
     }
+}
+
+fn log_files_from_lsof_result(result: Result<String, PortError>) -> Vec<LogFile> {
+    let mut files = Vec::new();
+    let raw = result.ok().unwrap_or_default();
+    for line in raw.lines().skip(1) {
+        let cols: Vec<&str> = line.split_whitespace().collect();
+        if cols.len() < 9 {
+            continue;
+        }
+        let fd = cols[3];
+        let kind = cols[4];
+        let name = cols[8..].join(" ");
+        if (fd == "1w" || fd == "2w") && kind == "REG" {
+            files.push(LogFile {
+                path: PathBuf::from(name),
+                fd: if fd == "1w" {
+                    LogFdKind::Stdout
+                } else {
+                    LogFdKind::Stderr
+                },
+                kind: "redirect".to_string(),
+                priority: 1,
+            });
+        } else if kind == "REG" && fd.ends_with('w') && is_log_like_path(&name) {
+            files.push(LogFile {
+                path: PathBuf::from(name),
+                fd: LogFdKind::File,
+                kind: "logfile".to_string(),
+                priority: 2,
+            });
+        }
+    }
+    files
+}
+
+fn get_process_cwd_from_lsof_result(result: Result<String, PortError>) -> Option<PathBuf> {
+    let raw = result.ok().unwrap_or_default();
+    raw.lines()
+        .find(|l| l.starts_with('n'))
+        .map(|l| PathBuf::from(&l[1..]))
 }
 
 pub fn get_system_log_command(pid: u32, follow: bool) -> Option<String> {
@@ -445,9 +453,11 @@ fn log_header_lines(port_label: &str, pid: u32, process_name: &str) -> [String; 
 mod tests {
     use super::{
         LogSelection, LogSelectionChoice, TailCommand, build_tail_command, choose_log_file_index,
-        is_log_like_path, log_header_lines, logs_usage_lines, parse_lines, parse_logs_request,
-        select_log_file, sort_and_dedupe_log_files,
+        get_process_cwd_from_lsof_result, is_log_like_path, log_files_from_lsof_result,
+        log_header_lines, logs_usage_lines, parse_lines, parse_logs_request, select_log_file,
+        sort_and_dedupe_log_files,
     };
+    use crate::error::PortError;
     use crate::model::{LogFdKind, LogFile};
     use std::path::PathBuf;
 
@@ -497,7 +507,7 @@ mod tests {
         let stdout = log_file("/app/out.log", LogFdKind::Stdout, "redirect", 1);
         let stderr = log_file("/app/err.log", LogFdKind::Stderr, "redirect", 1);
         assert_eq!(
-            select_log_file(&[stdout.clone()], false),
+            select_log_file(std::slice::from_ref(&stdout), false),
             LogSelection::Tail(stdout.clone())
         );
         assert_eq!(
@@ -599,6 +609,26 @@ mod tests {
         assert!(parsed.err_only);
     }
 
+    #[test]
+    fn lsof_timeout_degrades_to_empty_log_discovery_result() {
+        let files = log_files_from_lsof_result(Err(PortError::Timeout {
+            cmd: "lsof -p 42".to_string(),
+            ms: 5000,
+        }));
+
+        assert!(files.is_empty());
+    }
+
+    #[test]
+    fn get_process_cwd_timeout_returns_none() {
+        let cwd = get_process_cwd_from_lsof_result(Err(PortError::Timeout {
+            cmd: "lsof -p 42 -d cwd -Fn".to_string(),
+            ms: 3000,
+        }));
+
+        assert_eq!(cwd, None);
+    }
+
     fn log_file(path: &str, fd: LogFdKind, kind: &str, priority: u8) -> LogFile {
         LogFile {
             path: PathBuf::from(path),
@@ -609,7 +639,7 @@ mod tests {
     }
 }
 
-fn tail_file(path: &PathBuf, lines: &str, follow: bool) -> i32 {
+fn tail_file(path: &Path, lines: &str, follow: bool) -> i32 {
     let status = match build_tail_command(path, lines, follow) {
         TailCommand::PowerShell { command } => Command::new("powershell")
             .args(["-Command", &command])
@@ -639,7 +669,7 @@ pub(crate) enum TailCommand {
     Argv(Vec<String>),
 }
 
-pub(crate) fn build_tail_command(path: &PathBuf, lines: &str, follow: bool) -> TailCommand {
+pub(crate) fn build_tail_command(path: &Path, lines: &str, follow: bool) -> TailCommand {
     if cfg!(target_os = "windows") {
         let wait = if follow { " -Wait" } else { "" };
         TailCommand::PowerShell {

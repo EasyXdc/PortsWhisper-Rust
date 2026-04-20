@@ -172,19 +172,19 @@ pub(crate) fn diff_watch_events(
     let mut current_ports: Vec<_> = current.keys().copied().collect();
     current_ports.sort_unstable();
     for port in current_ports {
-        if !previous.contains_key(&port) {
-            if let Some(info) = current.get(&port) {
-                events.push(WatchEvent::New(info.clone()));
-            }
+        if !previous.contains_key(&port)
+            && let Some(info) = current.get(&port)
+        {
+            events.push(WatchEvent::New(info.clone()));
         }
     }
     let mut previous_ports: Vec<_> = previous.keys().copied().collect();
     previous_ports.sort_unstable();
     for port in previous_ports {
-        if !current.contains_key(&port) {
-            if let Some(info) = previous.get(&port) {
-                events.push(WatchEvent::Removed(info.clone()));
-            }
+        if !current.contains_key(&port)
+            && let Some(info) = previous.get(&port)
+        {
+            events.push(WatchEvent::Removed(info.clone()));
         }
     }
     events

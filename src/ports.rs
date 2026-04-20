@@ -204,23 +204,23 @@ where
             info.process_name = "docker".to_string();
         }
 
-        if let Some(cwd) = cwd {
-            if docker.is_none() {
-                let project_root = root_cache
-                    .entry(cwd.clone())
-                    .or_insert_with(|| find_root(cwd))
+        if let Some(cwd) = cwd
+            && docker.is_none()
+        {
+            let project_root = root_cache
+                .entry(cwd.clone())
+                .or_insert_with(|| find_root(cwd))
+                .clone();
+            info.cwd = Some(project_root.clone());
+            info.project_name = path_basename(&project_root);
+            if info.framework.is_none() {
+                info.framework = framework_cache
+                    .entry(project_root.clone())
+                    .or_insert_with(|| detect_framework_fn(&project_root))
                     .clone();
-                info.cwd = Some(project_root.clone());
-                info.project_name = path_basename(&project_root);
-                if info.framework.is_none() {
-                    info.framework = framework_cache
-                        .entry(project_root.clone())
-                        .or_insert_with(|| detect_framework_fn(&project_root))
-                        .clone();
-                }
-                if detailed {
-                    info.git_branch = git_branch(&project_root);
-                }
+            }
+            if detailed {
+                info.git_branch = git_branch(&project_root);
             }
         }
 
@@ -734,7 +734,7 @@ mod tests {
             fake.listening_ports.clone(),
             false,
             None,
-            || HashMap::new(),
+            HashMap::new,
             |cwd| {
                 root_calls.fetch_add(1, Ordering::SeqCst);
                 find_project_root(cwd)

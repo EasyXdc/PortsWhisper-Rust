@@ -1,4 +1,5 @@
 use crate::model::{LogFile, ProcessTreeNode, RawPortEntry, RawProcessDetails, RawProcessEntry};
+use crate::error::PortError;
 #[cfg(target_os = "linux")]
 use crate::util::command_exists;
 use crate::util::{basename, run_output};
@@ -120,19 +121,18 @@ impl PlatformScanner for UnsupportedScanner {
 }
 
 fn darwin_listening_ports_raw() -> Vec<RawPortEntry> {
-    darwin_listening_ports_from_output(
-        run_output(
-            "lsof",
-            ["-iTCP", "-sTCP:LISTEN", "-P", "-n"],
-            Some(Duration::from_millis(10_000)),
-        )
-        .ok()
-        .unwrap_or_default(),
-    )
+    darwin_listening_ports_from_result(run_output(
+        "lsof",
+        ["-iTCP", "-sTCP:LISTEN", "-P", "-n"],
+        Some(Duration::from_millis(10_000)),
+    ))
+}
+
+fn darwin_listening_ports_from_result(result: Result<String, PortError>) -> Vec<RawPortEntry> {
+    darwin_listening_ports_from_output(degrade_command_output(result))
 }
 
 fn darwin_listening_ports_from_output(raw: String) -> Vec<RawPortEntry> {
-    let raw = raw;
     let mut entries = Vec::new();
     let mut seen = HashMap::new();
     for line in raw.lines().skip(1) {
@@ -160,15 +160,11 @@ fn darwin_listening_ports_from_output(raw: String) -> Vec<RawPortEntry> {
 }
 
 fn darwin_listening_port_raw(port: u16) -> Option<RawPortEntry> {
-    darwin_listening_ports_from_output(
-        run_output(
-            "lsof",
-            [&format!("-iTCP:{port}"), "-sTCP:LISTEN", "-P", "-n"],
-            Some(Duration::from_millis(10_000)),
-        )
-        .ok()
-        .unwrap_or_default(),
-    )
+    darwin_listening_ports_from_result(run_output(
+        "lsof",
+        [&format!("-iTCP:{port}"), "-sTCP:LISTEN", "-P", "-n"],
+        Some(Duration::from_millis(10_000)),
+    ))
     .into_iter()
     .find(|entry| entry.port == port)
 }
@@ -182,7 +178,12 @@ fn linux_listening_ports_raw() -> Vec<RawPortEntry> {
     let mut entries = Vec::new();
     let mut seen = HashMap::new();
     if command_exists("ss") {
-        if let Ok(raw) = run_output("ss", ["-tlnp"], Some(Duration::from_millis(10_000))) {
+        let raw = degrade_command_output(run_output(
+            "ss",
+            ["-tlnp"],
+            Some(Duration::from_millis(10_000)),
+        ));
+        if !raw.is_empty() {
             for line in raw.lines().skip(1) {
                 let parts: Vec<&str> = line.split_whitespace().collect();
                 if parts.len() < 5 {
@@ -211,7 +212,12 @@ fn linux_listening_ports_raw() -> Vec<RawPortEntry> {
     }
 
     if entries.is_empty() && command_exists("netstat") {
-        if let Ok(raw) = run_output("netstat", ["-tlnp"], Some(Duration::from_millis(10_000))) {
+        let raw = degrade_command_output(run_output(
+            "netstat",
+            ["-tlnp"],
+            Some(Duration::from_millis(10_000)),
+        ));
+        if !raw.is_empty() {
             for line in raw.lines() {
                 if !line.contains("LISTEN") {
                     continue;
@@ -384,16 +390,15 @@ fn windows_listening_ports_raw() -> Vec<RawPortEntry> {
 }
 
 fn unix_batch_process_info(pids: &[u32]) -> HashMap<u32, RawProcessDetails> {
-    let mut map = HashMap::new();
     if pids.is_empty() {
-        return map;
+        return HashMap::new();
     }
     let pid_list = pids
         .iter()
         .map(u32::to_string)
         .collect::<Vec<_>>()
         .join(",");
-    let raw = run_output(
+    let result = run_output(
         "ps",
         [
             "-p",
@@ -402,9 +407,28 @@ fn unix_batch_process_info(pids: &[u32]) -> HashMap<u32, RawProcessDetails> {
             "pid=,ppid=,stat=,rss=,lstart=,command=",
         ],
         Some(Duration::from_millis(5000)),
-    )
-    .ok()
-    .unwrap_or_default();
+    );
+    #[cfg(target_os = "linux")]
+    {
+        return unix_batch_process_info_with(pids, result, |pid| linux_proc_details(*pid));
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        unix_batch_process_info_with(pids, result, |_| None)
+    }
+}
+
+fn unix_batch_process_info_with<Lookup>(
+    _pids: &[u32],
+    result: Result<String, PortError>,
+    _linux_fallback: Lookup,
+) -> HashMap<u32, RawProcessDetails>
+where
+    Lookup: Fn(&u32) -> Option<RawProcessDetails>,
+{
+    let mut map = HashMap::new();
+    let raw = degrade_command_output(result);
     for line in raw.lines() {
         if let Some((pid, details)) = parse_unix_ps_details(line) {
             map.insert(pid, details);
@@ -412,11 +436,11 @@ fn unix_batch_process_info(pids: &[u32]) -> HashMap<u32, RawProcessDetails> {
     }
     #[cfg(target_os = "linux")]
     {
-        for pid in pids {
+        for pid in _pids {
             if map.contains_key(pid) {
                 continue;
             }
-            if let Some(details) = linux_proc_details(*pid) {
+            if let Some(details) = _linux_fallback(pid) {
                 map.insert(*pid, details);
             }
         }
@@ -425,7 +449,7 @@ fn unix_batch_process_info(pids: &[u32]) -> HashMap<u32, RawProcessDetails> {
 }
 
 fn unix_process_details(pid: u32) -> Option<RawProcessDetails> {
-    let raw = run_output(
+    unix_process_details_from_result(run_output(
         "ps",
         [
             "-p",
@@ -434,8 +458,11 @@ fn unix_process_details(pid: u32) -> Option<RawProcessDetails> {
             "pid=,ppid=,stat=,rss=,lstart=,command=",
         ],
         Some(Duration::from_millis(5000)),
-    )
-    .ok()?;
+    ))
+}
+
+fn unix_process_details_from_result(result: Result<String, PortError>) -> Option<RawProcessDetails> {
+    let raw = degrade_command_output(result);
     raw.lines()
         .find_map(|line| parse_unix_ps_details(line).map(|(_, details)| details))
 }
@@ -474,9 +501,8 @@ fn darwin_batch_cwd(pids: &[u32]) -> HashMap<u32, PathBuf> {
         "lsof",
         ["-a", "-d", "cwd", "-p", &pid_list],
         Some(Duration::from_millis(10_000)),
-    )
-    .ok()
-    .unwrap_or_default();
+    );
+    let raw = degrade_command_output(raw);
     for line in raw.lines().skip(1) {
         let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.len() < 9 {
@@ -536,13 +562,11 @@ fn windows_batch_cwd(pids: &[u32]) -> HashMap<u32, PathBuf> {
 }
 
 fn unix_all_processes_raw() -> Vec<RawProcessEntry> {
-    let raw = run_output(
+    let raw = degrade_command_output(run_output(
         "ps",
         ["-eo", "pid=,pcpu=,pmem=,rss=,lstart=,command="],
         Some(Duration::from_millis(5000)),
-    )
-    .ok()
-    .unwrap_or_default();
+    ));
     let current_pid = std::process::id();
     let mut entries = Vec::new();
     let mut seen = HashMap::new();
@@ -575,6 +599,10 @@ fn unix_all_processes_raw() -> Vec<RawProcessEntry> {
         });
     }
     entries
+}
+
+fn degrade_command_output(result: Result<String, PortError>) -> String {
+    result.ok().unwrap_or_default()
 }
 
 #[cfg(target_os = "windows")]
@@ -797,6 +825,10 @@ fn unix_pid_exists(pid: u32) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::{darwin_listening_ports_from_result, unix_process_details_from_result};
+    #[cfg(target_os = "linux")]
+    use super::unix_batch_process_info_with;
+    use crate::error::PortError;
     #[cfg(target_os = "windows")]
     use super::windows_process_name_with;
     #[cfg(target_os = "linux")]
@@ -810,6 +842,53 @@ mod tests {
     use std::io::{Error, ErrorKind};
     #[cfg(target_os = "linux")]
     use std::path::PathBuf;
+
+    #[test]
+    fn listening_port_scan_timeout_degrades_to_empty_entries() {
+        let entries = darwin_listening_ports_from_result(Err(PortError::Timeout {
+            cmd: "lsof -iTCP".to_string(),
+            ms: 10_000,
+        }));
+
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn unix_process_details_timeout_returns_none() {
+        let details = unix_process_details_from_result(
+            Err(PortError::Timeout {
+                cmd: "ps -p 42".to_string(),
+                ms: 5_000,
+            }),
+        );
+
+        assert!(details.is_none());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn unix_batch_process_info_uses_proc_fallback_when_ps_output_times_out() {
+        let details = unix_batch_process_info_with(
+            &[42],
+            Err(PortError::Timeout {
+                cmd: "ps -p 42".to_string(),
+                ms: 5_000,
+            }),
+            |pid| {
+            Some(RawProcessDetails {
+                pid: *pid,
+                ppid: Some(7),
+                stat: "S".to_string(),
+                rss_kb: 64,
+                lstart: Some("Fri Apr 19 12:00:00 2026".to_string()),
+                command: "fallback-from-proc".to_string(),
+            })
+        },
+        );
+
+        assert_eq!(details.len(), 1);
+        assert_eq!(details.get(&42).map(|detail| detail.command.as_str()), Some("fallback-from-proc"));
+    }
 
     #[cfg(target_os = "linux")]
     #[test]

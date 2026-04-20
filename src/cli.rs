@@ -159,20 +159,20 @@ fn run_port_detail(port: u32) -> i32 {
     display::display_port_detail(info.as_ref());
     if let Some(info) = info {
         let prompt = detail_kill_prompt(port);
-        if let Some(answer) = prompt_line(&prompt) {
-            if answer.to_lowercase() == "y" {
-                if kill::kill_process(info.pid, "SIGTERM") {
-                    println!(
-                        "{}",
-                        style::green(format!("\n  ✓ Killed PID {}\n", info.pid))
-                    );
-                } else {
-                    println!(
-                        "{}",
-                        style::red(format!("\n  ✕ Failed. Try: sudo kill -9 {}\n", info.pid))
-                    );
-                    return 1;
-                }
+        if let Some(answer) = prompt_line(&prompt)
+            && answer.to_lowercase() == "y"
+        {
+            if kill::kill_process(info.pid, "SIGTERM") {
+                println!(
+                    "{}",
+                    style::green(format!("\n  ✓ Killed PID {}\n", info.pid))
+                );
+            } else {
+                println!(
+                    "{}",
+                    style::red(format!("\n  ✕ Failed. Try: sudo kill -9 {}\n", info.pid))
+                );
+                return 1;
             }
         }
     }
@@ -353,7 +353,7 @@ mod tests {
 fn run_clean() -> i32 {
     run_clean_with(
         scanner::find_orphaned_processes,
-        |prompt| prompt_line(prompt),
+        prompt_line,
         kill::kill_process,
     )
 }
