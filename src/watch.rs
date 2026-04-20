@@ -15,6 +15,19 @@ use std::time::Duration;
 
 static STOP_REQUESTED: AtomicBool = AtomicBool::new(false);
 
+fn stop_requested() -> bool {
+    STOP_REQUESTED.load(Ordering::SeqCst)
+}
+
+fn reset_stop_requested() {
+    STOP_REQUESTED.store(false, Ordering::SeqCst);
+}
+
+#[cfg(test)]
+fn set_stop_requested_for_test(value: bool) {
+    STOP_REQUESTED.store(value, Ordering::SeqCst);
+}
+
 #[derive(Clone, Debug, Default)]
 struct DockerWatchCache {
     ports: Vec<u16>,
@@ -31,34 +44,28 @@ pub fn run_watch() -> i32 {
     install_sigint_handler();
     display::display_watch_header();
     run_watch_loop(
-        || STOP_REQUESTED.load(Ordering::SeqCst),
+        stop_requested,
         |previous, docker_cache| {
-            let (current, events, next_cache) = refresh_watch_state_with(
+            refresh_watch_state_with(
                 platform::native_scanner(),
                 previous,
                 docker_cache,
                 docker::batch_docker_info,
-            );
-            for event in events {
-                match event {
-                    WatchEvent::New(info) => display::display_watch_event("new", &info),
-                    WatchEvent::Removed(info) => display::display_watch_event("removed", &info),
-                }
-            }
-            (current, Vec::new(), next_cache)
+            )
         },
-        display_watch_warnings,
+        display_watch_warning,
+        display::display_watch_event,
         sleep_interruptibly,
         None,
     );
-    println!("{}", style::gray("\n\n  Stopped watching.\n"));
+    println!("{}", stopped_message());
     0
 }
 
 pub fn run_watch_json() -> i32 {
     install_sigint_handler();
     run_watch_json_loop(
-        || STOP_REQUESTED.load(Ordering::SeqCst),
+        stop_requested,
         |previous, docker_cache| {
             refresh_watch_state_with(
                 platform::native_scanner(),
@@ -73,10 +80,15 @@ pub fn run_watch_json() -> i32 {
     )
 }
 
-fn run_watch_loop<ShouldStop, Refresh, DisplayWarnings, Sleep>(
+fn stopped_message() -> String {
+    style::gray("\n\n  Stopped watching.\n")
+}
+
+fn run_watch_loop<ShouldStop, Refresh, DisplayWarnings, DisplayEvent, Sleep>(
     should_stop: ShouldStop,
     refresh: Refresh,
-    display_warnings: DisplayWarnings,
+    display_warning: DisplayWarnings,
+    display_event: DisplayEvent,
     sleep: Sleep,
     max_iterations: Option<usize>,
 ) -> i32
@@ -86,7 +98,8 @@ where
         &HashMap<u16, PortInfo>,
         &DockerWatchCache,
     ) -> (HashMap<u16, PortInfo>, Vec<WatchEvent>, DockerWatchCache),
-    DisplayWarnings: Fn(&[error::PortError]),
+    DisplayWarnings: Fn(&error::PortError),
+    DisplayEvent: Fn(&str, &PortInfo),
     Sleep: Fn(Duration),
 {
     let mut previous: HashMap<u16, _> = HashMap::new();
@@ -96,9 +109,27 @@ where
     error::drain_user_warnings();
 
     while !should_stop() {
-        let (current, _events, next_cache) = refresh(&previous, &docker_cache);
+        let (current, events, next_cache) = refresh(&previous, &docker_cache);
+        if should_stop() {
+            error::drain_user_warnings();
+            break;
+        }
         let warnings = error::drain_user_warnings();
-        display_warnings(&warnings);
+        for warning in &warnings {
+            if should_stop() {
+                break;
+            }
+            display_warning(warning);
+        }
+        for event in &events {
+            if should_stop() {
+                break;
+            }
+            match event {
+                WatchEvent::New(info) => display_event("new", info),
+                WatchEvent::Removed(info) => display_event("removed", info),
+            }
+        }
         previous = current;
         docker_cache = next_cache;
         iterations += 1;
@@ -135,8 +166,15 @@ where
 
     while !should_stop() {
         let (current, events, next_cache) = refresh(&previous, &docker_cache);
+        if should_stop() {
+            error::drain_user_warnings();
+            break;
+        }
         let warnings = error::drain_user_warnings();
         for warning in warnings {
+            if should_stop() {
+                break;
+            }
             if let Ok(line) = json_output::render_json(&json_output::CommandEnvelope::ok(
                 "ports watch",
                 json_output::watch_warning_payload(warning.user_message()),
@@ -145,6 +183,9 @@ where
             }
         }
         for event in events {
+            if should_stop() {
+                break;
+            }
             let (action, info) = match event {
                 WatchEvent::New(info) => ("new", info),
                 WatchEvent::Removed(info) => ("removed", info),
@@ -168,10 +209,8 @@ where
     0
 }
 
-fn display_watch_warnings(warnings: &[error::PortError]) {
-    for warning in warnings {
-        println!("  warning: {}", warning.user_message());
-    }
+fn display_watch_warning(warning: &error::PortError) {
+    println!("  warning: {}", warning.user_message());
 }
 
 fn refresh_watch_state_with<DockerMap>(
@@ -283,14 +322,14 @@ pub(crate) fn diff_watch_events(
 fn sleep_interruptibly(duration: Duration) {
     let step = Duration::from_millis(100);
     let mut elapsed = Duration::ZERO;
-    while elapsed < duration && !STOP_REQUESTED.load(Ordering::SeqCst) {
+    while elapsed < duration && !stop_requested() {
         thread::sleep(step.min(duration - elapsed));
         elapsed += step;
     }
 }
 
 fn install_sigint_handler() {
-    STOP_REQUESTED.store(false, Ordering::SeqCst);
+    reset_stop_requested();
     static INSTALLED: Once = Once::new();
     INSTALLED.call_once(|| {
         let _ = ctrlc::set_handler(|| {
@@ -302,8 +341,9 @@ fn install_sigint_handler() {
 #[cfg(test)]
 mod tests {
     use super::{
-        DockerWatchCache, WatchEvent, diff_watch_events, refresh_watch_state_with,
-        run_watch_json_loop, run_watch_loop,
+        DockerWatchCache, WatchEvent, diff_watch_events, install_sigint_handler,
+        refresh_watch_state_with, reset_stop_requested, run_watch_json_loop, run_watch_loop,
+        set_stop_requested_for_test, stop_requested,
     };
     use crate::error::{PortError, drain_user_warnings, record_user_warning, verbose_test_lock};
     use crate::model::{
@@ -311,12 +351,14 @@ mod tests {
         RawProcessDetails, RawProcessEntry,
     };
     use crate::platform::PlatformScanner;
+    use crate::style;
     use crate::test_support::FakePlatformScanner;
     use std::cell::RefCell;
     use std::collections::HashMap;
     use std::path::PathBuf;
-    use std::sync::Mutex;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
 
     #[test]
     fn watch_diff_detects_new_and_removed_without_sleeping() {
@@ -513,6 +555,7 @@ mod tests {
                 (HashMap::new(), Vec::new(), DockerWatchCache::default())
             },
             |_| {},
+            |_, _| {},
             |_| {
                 sleeps.fetch_add(1, Ordering::SeqCst);
                 stopped.store(true, Ordering::SeqCst);
@@ -523,6 +566,78 @@ mod tests {
         assert_eq!(exit, 0);
         assert_eq!(refreshes.load(Ordering::SeqCst), 1);
         assert_eq!(sleeps.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn watch_loop_does_not_refresh_again_after_interruptible_sleep_sets_stop_flag() {
+        reset_stop_requested();
+        let refreshes = AtomicUsize::new(0);
+
+        let exit = run_watch_loop(
+            stop_requested,
+            |_, _| {
+                refreshes.fetch_add(1, Ordering::SeqCst);
+                (HashMap::new(), Vec::new(), DockerWatchCache::default())
+            },
+            |_| {},
+            |_, _| {},
+            |_| {
+                set_stop_requested_for_test(true);
+            },
+            Some(2),
+        );
+
+        assert_eq!(exit, 0);
+        assert_eq!(refreshes.load(Ordering::SeqCst), 1);
+        reset_stop_requested();
+    }
+
+    #[test]
+    fn sleep_interruptibly_returns_early_when_stop_is_requested() {
+        reset_stop_requested();
+        let started = Arc::new(AtomicBool::new(false));
+        let started_for_thread = Arc::clone(&started);
+        let interrupter = std::thread::spawn(move || {
+            started_for_thread.store(true, Ordering::SeqCst);
+            std::thread::sleep(Duration::from_millis(10));
+            set_stop_requested_for_test(true);
+        });
+
+        while !started.load(Ordering::SeqCst) {
+            std::thread::yield_now();
+        }
+
+        let start = Instant::now();
+        super::sleep_interruptibly(Duration::from_millis(500));
+        let elapsed = start.elapsed();
+
+        interrupter
+            .join()
+            .expect("interrupter thread should finish");
+        assert!(elapsed < Duration::from_millis(500));
+        reset_stop_requested();
+    }
+
+    #[test]
+    fn watch_stop_flag_helpers_clear_previous_interrupt_state() {
+        let _guard = verbose_test_lock().lock().unwrap();
+        set_stop_requested_for_test(true);
+        assert!(stop_requested());
+
+        reset_stop_requested();
+
+        assert!(!stop_requested());
+    }
+
+    #[test]
+    fn install_sigint_handler_resets_stop_flag_before_new_session_starts() {
+        let _guard = verbose_test_lock().lock().unwrap();
+        set_stop_requested_for_test(true);
+        assert!(stop_requested());
+
+        install_sigint_handler();
+
+        assert!(!stop_requested());
     }
 
     #[test]
@@ -538,6 +653,7 @@ mod tests {
                 (HashMap::new(), Vec::new(), DockerWatchCache::default())
             },
             |_| {},
+            |_, _| {},
             |_| {},
             Some(1),
         );
@@ -560,14 +676,10 @@ mod tests {
                 record_user_warning(&PortError::PermissionDenied(format!("ps-{next}")));
                 (HashMap::new(), Vec::new(), DockerWatchCache::default())
             },
-            |warnings| {
-                displayed.borrow_mut().push(
-                    warnings
-                        .iter()
-                        .map(|warning| warning.user_message())
-                        .collect(),
-                );
+            |warning| {
+                displayed.borrow_mut().push(vec![warning.user_message()]);
             },
+            |_, _| {},
             |_| {
                 assert!(drain_user_warnings().is_empty());
             },
@@ -588,6 +700,8 @@ mod tests {
 
     #[test]
     fn watch_json_outputs_json_lines_for_events_and_warnings() {
+        let _guard = verbose_test_lock().lock().unwrap();
+        drain_user_warnings();
         let lines = RefCell::new(Vec::<String>::new());
         let refreshes = AtomicUsize::new(0);
 
@@ -638,6 +752,177 @@ mod tests {
         assert_eq!(new_event["data"]["port"]["port"], 3000);
         assert_eq!(removed_event["data"]["action"], "removed");
         assert_eq!(removed_event["data"]["port"]["pid"], 30);
+        assert!(drain_user_warnings().is_empty());
+    }
+
+    #[test]
+    fn watch_loop_skips_events_after_stop_is_requested_during_refresh() {
+        let _guard = verbose_test_lock().lock().unwrap();
+        reset_stop_requested();
+        let displayed = RefCell::new(Vec::<(String, u16)>::new());
+
+        let exit = run_watch_loop(
+            stop_requested,
+            |_, _| {
+                set_stop_requested_for_test(true);
+                (
+                    HashMap::from([(3000, port_with_pid(3000, 30))]),
+                    vec![WatchEvent::New(port_with_pid(3000, 30))],
+                    DockerWatchCache::default(),
+                )
+            },
+            |_| {},
+            |kind, info| displayed.borrow_mut().push((kind.to_string(), info.port)),
+            |_| {},
+            Some(1),
+        );
+
+        assert_eq!(exit, 0);
+        assert!(displayed.into_inner().is_empty());
+        reset_stop_requested();
+    }
+
+    #[test]
+    fn watch_loop_stops_emitting_mid_batch_once_stop_is_requested() {
+        let _guard = verbose_test_lock().lock().unwrap();
+        reset_stop_requested();
+        let warnings = RefCell::new(Vec::<String>::new());
+        let events = RefCell::new(Vec::<(String, u16)>::new());
+
+        let exit = run_watch_loop(
+            stop_requested,
+            |_, _| {
+                record_user_warning(&PortError::PermissionDenied("ps-1".into()));
+                record_user_warning(&PortError::PermissionDenied("ps-2".into()));
+                (
+                    HashMap::from([
+                        (3000, port_with_pid(3000, 30)),
+                        (4000, port_with_pid(4000, 40)),
+                    ]),
+                    vec![
+                        WatchEvent::New(port_with_pid(3000, 30)),
+                        WatchEvent::New(port_with_pid(4000, 40)),
+                    ],
+                    DockerWatchCache::default(),
+                )
+            },
+            |warning| {
+                warnings.borrow_mut().push(warning.user_message());
+                set_stop_requested_for_test(true);
+            },
+            |kind, info| events.borrow_mut().push((kind.to_string(), info.port)),
+            |_| {},
+            Some(1),
+        );
+
+        assert_eq!(exit, 0);
+        assert_eq!(warnings.into_inner().len(), 1);
+        assert!(events.into_inner().is_empty());
+        assert!(drain_user_warnings().is_empty());
+        reset_stop_requested();
+    }
+
+    #[test]
+    fn watch_loop_skips_warnings_after_stop_is_requested_during_refresh() {
+        let _guard = verbose_test_lock().lock().unwrap();
+        drain_user_warnings();
+        reset_stop_requested();
+        let displayed = RefCell::new(Vec::<Vec<String>>::new());
+
+        let exit = run_watch_loop(
+            stop_requested,
+            |_, _| {
+                record_user_warning(&PortError::PermissionDenied("ps".into()));
+                set_stop_requested_for_test(true);
+                (HashMap::new(), Vec::new(), DockerWatchCache::default())
+            },
+            |warning| {
+                displayed.borrow_mut().push(vec![warning.user_message()]);
+            },
+            |_, _| {},
+            |_| {},
+            Some(1),
+        );
+
+        assert_eq!(exit, 0);
+        assert!(displayed.into_inner().is_empty());
+        assert!(drain_user_warnings().is_empty());
+        reset_stop_requested();
+    }
+
+    #[test]
+    fn watch_json_skips_output_after_stop_is_requested_during_refresh() {
+        let _guard = verbose_test_lock().lock().unwrap();
+        drain_user_warnings();
+        reset_stop_requested();
+        let lines = RefCell::new(Vec::<String>::new());
+
+        let exit = run_watch_json_loop(
+            stop_requested,
+            |_, _| {
+                record_user_warning(&PortError::PermissionDenied("ps".into()));
+                set_stop_requested_for_test(true);
+                (
+                    HashMap::from([(3000, port_with_pid(3000, 30))]),
+                    vec![WatchEvent::New(port_with_pid(3000, 30))],
+                    DockerWatchCache::default(),
+                )
+            },
+            |line| lines.borrow_mut().push(line),
+            |_| {},
+            Some(1),
+        );
+
+        assert_eq!(exit, 0);
+        assert!(lines.into_inner().is_empty());
+        assert!(drain_user_warnings().is_empty());
+        reset_stop_requested();
+    }
+
+    #[test]
+    fn watch_json_stops_emitting_mid_batch_once_stop_is_requested() {
+        let _guard = verbose_test_lock().lock().unwrap();
+        drain_user_warnings();
+        reset_stop_requested();
+        let lines = RefCell::new(Vec::<String>::new());
+
+        let exit = run_watch_json_loop(
+            stop_requested,
+            |_, _| {
+                record_user_warning(&PortError::PermissionDenied("ps-1".into()));
+                record_user_warning(&PortError::PermissionDenied("ps-2".into()));
+                (
+                    HashMap::from([
+                        (3000, port_with_pid(3000, 30)),
+                        (4000, port_with_pid(4000, 40)),
+                    ]),
+                    vec![
+                        WatchEvent::New(port_with_pid(3000, 30)),
+                        WatchEvent::New(port_with_pid(4000, 40)),
+                    ],
+                    DockerWatchCache::default(),
+                )
+            },
+            |line| {
+                lines.borrow_mut().push(line);
+                set_stop_requested_for_test(true);
+            },
+            |_| {},
+            Some(1),
+        );
+
+        assert_eq!(exit, 0);
+        assert_eq!(lines.into_inner().len(), 1);
+        assert!(drain_user_warnings().is_empty());
+        reset_stop_requested();
+    }
+
+    #[test]
+    fn stopped_message_has_stable_text() {
+        assert_eq!(
+            super::stopped_message(),
+            style::gray("\n\n  Stopped watching.\n")
+        );
     }
 
     struct CountingScanner {
