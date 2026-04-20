@@ -49,6 +49,17 @@
   - `Time (mean ± σ):      54.4 ms ±   3.6 ms    [User: 18.3 ms, System: 33.4 ms]`
   - `Range (min … max):    48.3 ms …  66.1 ms    45 runs`
 
+## Build Baseline
+
+- Build command: `command time -lp cargo build --release --bin ports`
+  - `Finished release profile [optimized] target(s) in 7.04s`
+  - `real 7.12`
+  - `user 20.02`
+  - `sys 3.19`
+- Binary size artifact: `target/release/ports`
+- Binary size command: `ls -l "target/release/ports"`
+  - `1101872` bytes
+
 ## Caveat
 
 - A fresh rerun already showed noticeable noise for at least `./target/release/ports`, so these measurements should be treated as a machine-local sample baseline rather than a stable truth.
