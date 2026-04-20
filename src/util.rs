@@ -6,12 +6,39 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use unicode_width::UnicodeWidthChar;
 use wait_timeout::ChildExt;
 
-use crate::error::{PortError, verbose_log_port_error};
+use crate::error::{PortError, record_user_warning, verbose_log_port_error};
 
 pub fn run_output<S, I, A>(
     program: S,
     args: I,
     timeout: Option<Duration>,
+) -> Result<String, PortError>
+where
+    S: AsRef<OsStr>,
+    I: IntoIterator<Item = A>,
+    A: AsRef<OsStr>,
+{
+    run_output_with_user_warnings(program, args, timeout, true)
+}
+
+fn run_output_silent_probe<S, I, A>(
+    program: S,
+    args: I,
+    timeout: Option<Duration>,
+) -> Result<String, PortError>
+where
+    S: AsRef<OsStr>,
+    I: IntoIterator<Item = A>,
+    A: AsRef<OsStr>,
+{
+    run_output_with_user_warnings(program, args, timeout, false)
+}
+
+fn run_output_with_user_warnings<S, I, A>(
+    program: S,
+    args: I,
+    timeout: Option<Duration>,
+    record_warning: bool,
 ) -> Result<String, PortError>
 where
     S: AsRef<OsStr>,
@@ -26,6 +53,9 @@ where
     let result = run_output_impl(program, args, timeout);
     if let Err(ref e) = result {
         verbose_log_port_error(e);
+        if record_warning {
+            record_user_warning(e);
+        }
     }
     result
 }
@@ -120,7 +150,7 @@ pub fn command_exists(cmd: &str) -> bool {
         .stderr(Stdio::null())
         .status()
         .is_ok()
-        || run_output("which", [cmd], None).is_ok()
+        || run_output_silent_probe("which", [cmd], None).is_ok()
 }
 
 pub fn format_memory(rss_kb: u64) -> String {
@@ -329,21 +359,20 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn run_output_reports_command_missing_for_nonexistent_binary() {
-        let err = run_output(
-            "definitely-not-a-real-command-xyz",
-            ["arg"],
-            None,
-        )
-        .expect_err("should fail");
+        use crate::error::{drain_user_warnings, verbose_test_lock};
+        let _guard = verbose_test_lock().lock().unwrap();
+        drain_user_warnings();
+
+        let err = run_output("definitely-not-a-real-command-xyz", ["arg"], None)
+            .expect_err("should fail");
         assert!(matches!(err, PortError::CommandMissing(_)));
+        drain_user_warnings();
     }
 
     #[cfg(unix)]
     #[test]
     fn run_output_err_writes_to_verbose_log_when_enabled() {
-        use crate::error::{
-            drain_verbose_log, set_verbose_enabled, verbose_test_lock,
-        };
+        use crate::error::{drain_verbose_log, set_verbose_enabled, verbose_test_lock};
         let _guard = verbose_test_lock().lock().unwrap();
         set_verbose_enabled(true);
         drain_verbose_log();
@@ -353,8 +382,10 @@ mod tests {
         set_verbose_enabled(false);
 
         assert!(
-            drained.iter().any(|m| m.contains("not found")
-                && m.contains("definitely-not-a-real-command-xyz-2")),
+            drained
+                .iter()
+                .any(|m| m.contains("not found")
+                    && m.contains("definitely-not-a-real-command-xyz-2")),
             "verbose log should capture full PortError message, got {drained:?}"
         );
     }
@@ -362,9 +393,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn run_output_err_does_not_accumulate_when_verbose_disabled() {
-        use crate::error::{
-            drain_verbose_log, set_verbose_enabled, verbose_test_lock,
-        };
+        use crate::error::{drain_verbose_log, set_verbose_enabled, verbose_test_lock};
         let _guard = verbose_test_lock().lock().unwrap();
         set_verbose_enabled(false);
         drain_verbose_log();
@@ -375,18 +404,57 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn run_output_err_records_user_warning_even_when_verbose_disabled() {
+        use crate::error::{drain_user_warnings, set_verbose_enabled, verbose_test_lock};
+        let _guard = verbose_test_lock().lock().unwrap();
+        set_verbose_enabled(false);
+        drain_user_warnings();
+
+        let _ = run_output("definitely-not-a-real-command-xyz-4", ["arg"], None);
+        let drained = drain_user_warnings();
+
+        assert_eq!(drained.len(), 1);
+        assert_eq!(
+            drained[0].user_message(),
+            "definitely-not-a-real-command-xyz-4 not found; results may be incomplete"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn command_exists_probe_does_not_record_user_warning() {
+        use crate::error::{drain_user_warnings, set_verbose_enabled, verbose_test_lock};
+        let _guard = verbose_test_lock().lock().unwrap();
+        set_verbose_enabled(false);
+        drain_user_warnings();
+
+        assert!(!command_exists("definitely-not-a-real-command-xyz-5"));
+        assert!(drain_user_warnings().is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn run_output_times_out_for_long_running_child() {
+        use crate::error::{drain_user_warnings, verbose_test_lock};
+        let _guard = verbose_test_lock().lock().unwrap();
+        drain_user_warnings();
+
         let result = run_output("sleep", ["10"], Some(Duration::from_millis(200)));
         assert!(
             matches!(result, Err(PortError::Timeout { .. })),
             "expected Timeout, got {:?}",
             result
         );
+        drain_user_warnings();
     }
 
     #[cfg(unix)]
     #[test]
     fn run_output_timeout_reports_command_text_and_requested_ms() {
+        use crate::error::{drain_user_warnings, verbose_test_lock};
+        let _guard = verbose_test_lock().lock().unwrap();
+        drain_user_warnings();
+
         let result = run_output("sleep", ["10"], Some(Duration::from_millis(200)))
             .expect_err("sleep should time out");
 
@@ -398,11 +466,16 @@ mod tests {
             }
             other => panic!("expected Timeout, got {other:?}"),
         }
+        drain_user_warnings();
     }
 
     #[cfg(unix)]
     #[test]
     fn run_output_timeout_returns_well_before_command_natural_exit() {
+        use crate::error::{drain_user_warnings, verbose_test_lock};
+        let _guard = verbose_test_lock().lock().unwrap();
+        drain_user_warnings();
+
         let start = Instant::now();
         let result = run_output("sleep", ["10"], Some(Duration::from_millis(200)));
         let elapsed = start.elapsed();
@@ -412,13 +485,17 @@ mod tests {
             elapsed < Duration::from_secs(3),
             "timeout path should finish well before natural exit: {elapsed:?}"
         );
+        drain_user_warnings();
     }
 
     #[cfg(unix)]
     #[test]
     fn run_output_reports_exec_failed_on_nonzero_exit_with_no_stdout() {
-        let err = run_output("sh", ["-c", "echo oops >&2; exit 3"], None)
-            .expect_err("should fail");
+        use crate::error::{drain_user_warnings, verbose_test_lock};
+        let _guard = verbose_test_lock().lock().unwrap();
+        drain_user_warnings();
+
+        let err = run_output("sh", ["-c", "echo oops >&2; exit 3"], None).expect_err("should fail");
         match err {
             PortError::ExecFailed { exit, stderr, .. } => {
                 assert_eq!(exit, 3);
@@ -426,6 +503,7 @@ mod tests {
             }
             other => panic!("expected ExecFailed, got {other:?}"),
         }
+        drain_user_warnings();
     }
 
     fn temp_dir(label: &str) -> std::path::PathBuf {

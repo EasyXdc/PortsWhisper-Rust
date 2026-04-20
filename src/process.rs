@@ -98,9 +98,7 @@ where
                 status_raw: String::new(),
             };
             let should_enrich_project = info.framework.is_some() || keep_dev_process(&info);
-            if should_enrich_project
-                && let Some(cwd) = cwd
-            {
+            if should_enrich_project && let Some(cwd) = cwd {
                 let root = root_cache
                     .entry(cwd.clone())
                     .or_insert_with(|| find_root(cwd))
@@ -191,8 +189,8 @@ mod tests {
     use crate::util::find_project_root;
     use std::fs;
     use std::path::PathBuf;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]

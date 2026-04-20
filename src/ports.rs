@@ -603,6 +603,61 @@ mod tests {
     }
 
     #[test]
+    fn listening_ports_helper_returns_ports_directly() {
+        let fake = FakePlatformScanner {
+            listening_ports: vec![RawPortEntry {
+                port: 3000,
+                pid: 42,
+                process_name: "node".to_string(),
+            }],
+            process_details: HashMap::from([(
+                42,
+                RawProcessDetails {
+                    pid: 42,
+                    ppid: Some(1),
+                    stat: "S".to_string(),
+                    rss_kb: 1024,
+                    lstart: None,
+                    command: "node server.js".to_string(),
+                },
+            )]),
+            ..Default::default()
+        };
+
+        let result = get_listening_ports_with(&fake, false, None);
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].port, 3000);
+    }
+
+    #[test]
+    fn port_detail_helper_returns_optional_info_directly() {
+        let fake = FakePlatformScanner {
+            listening_ports: vec![RawPortEntry {
+                port: 3000,
+                pid: 42,
+                process_name: "node".to_string(),
+            }],
+            process_details: HashMap::from([(
+                42,
+                RawProcessDetails {
+                    pid: 42,
+                    ppid: Some(1),
+                    stat: "S".to_string(),
+                    rss_kb: 1024,
+                    lstart: None,
+                    command: "node server.js".to_string(),
+                },
+            )]),
+            ..Default::default()
+        };
+
+        let result = get_port_details_with(&fake, 3000, None);
+
+        assert_eq!(result.as_ref().map(|info| info.port), Some(3000));
+    }
+
+    #[test]
     fn port_info_start_time_is_stored_as_datetime_equivalent() {
         let mut fake = FakePlatformScanner {
             listening_ports: vec![RawPortEntry {

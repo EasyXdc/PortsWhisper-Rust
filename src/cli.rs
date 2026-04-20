@@ -2,6 +2,7 @@ use crate::display;
 use crate::error;
 use crate::kill;
 use crate::logs;
+use crate::ports;
 use crate::scanner;
 use crate::style;
 use crate::util::prompt_line;
@@ -30,15 +31,12 @@ pub enum CliCommand {
 pub fn run(_binary_name: &str, args: Vec<String>) -> i32 {
     let parsed = parse_args(&args);
     error::set_verbose_enabled(parsed.verbose);
+    error::drain_user_warnings();
     let exit_code = dispatch(parsed);
     if error::verbose_enabled() {
         let entries = error::drain_verbose_log();
-        if !entries.is_empty() {
-            eprintln!();
-            eprintln!("  verbose log ({} entries):", entries.len());
-            for entry in entries {
-                eprintln!("    {entry}");
-            }
+        for line in format_verbose_entries(&entries) {
+            eprintln!("{line}");
         }
         error::set_verbose_enabled(false);
     }
@@ -48,11 +46,12 @@ pub fn run(_binary_name: &str, args: Vec<String>) -> i32 {
 fn dispatch(parsed: ParsedCli) -> i32 {
     match parsed.command {
         CliCommand::List => {
-            let mut ports = scanner::get_listening_ports(false);
+            let mut ports = ports::get_listening_ports(false);
             if !parsed.show_all {
                 ports.retain(|p| scanner::is_dev_process(&p.process_name, &p.command));
             }
             display::display_port_table(&ports, !parsed.show_all);
+            print_warning_lines(&error::drain_user_warnings());
             0
         }
         CliCommand::Help => {
@@ -103,6 +102,7 @@ fn dispatch(parsed: ParsedCli) -> i32 {
                     .unwrap_or(std::cmp::Ordering::Equal)
             });
             display::display_process_table(&processes, !parsed.show_all);
+            print_warning_lines(&error::drain_user_warnings());
             0
         }
         CliCommand::Clean => run_clean(),
@@ -152,11 +152,12 @@ pub fn parse_args(args: &[String]) -> ParsedCli {
 
 fn run_port_detail(port: u32) -> i32 {
     let info = if port <= u16::MAX as u32 {
-        scanner::get_port_details(port as u16)
+        ports::get_port_details(port as u16)
     } else {
         None
     };
     display::display_port_detail(info.as_ref());
+    print_warning_lines(&error::drain_user_warnings());
     if let Some(info) = info {
         let prompt = detail_kill_prompt(port);
         if let Some(answer) = prompt_line(&prompt)
@@ -179,12 +180,39 @@ fn run_port_detail(port: u32) -> i32 {
     0
 }
 
+fn format_warning_lines(warnings: &[error::PortError]) -> Vec<String> {
+    warnings
+        .iter()
+        .map(|warning| format!("  warning: {}", warning.user_message()))
+        .collect()
+}
+
+fn print_warning_lines(warnings: &[error::PortError]) {
+    for line in format_warning_lines(warnings) {
+        println!("{line}");
+    }
+}
+
+fn format_verbose_entries(entries: &[String]) -> Vec<String> {
+    if entries.is_empty() {
+        return Vec::new();
+    }
+
+    let mut lines = Vec::with_capacity(entries.len() + 2);
+    lines.push(String::new());
+    lines.push(format!("  verbose log ({} entries):", entries.len()));
+    lines.extend(entries.iter().map(|entry| format!("    {entry}")));
+    lines
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_clean_answer, clean_confirmation_prompt, detail_kill_prompt, parse_args,
-        run_clean_with, unknown_command_lines, CliCommand, ParsedCli,
+        CliCommand, ParsedCli, apply_clean_answer, clean_confirmation_prompt, detail_kill_prompt,
+        format_verbose_entries, format_warning_lines, parse_args, run_clean_with,
+        unknown_command_lines,
     };
+    use crate::error::{PortError, drain_user_warnings, record_user_warning, verbose_test_lock};
     use crate::model::{PortInfo, ProcessStatus};
     use std::cell::RefCell;
 
@@ -328,6 +356,65 @@ mod tests {
 
         assert_eq!(exit, 0);
         assert_eq!(*calls.borrow(), 1);
+    }
+
+    #[test]
+    fn formats_user_warning_lines_with_indented_prefix() {
+        let lines = format_warning_lines(&[
+            PortError::CommandMissing("lsof".into()),
+            PortError::PermissionDenied("ps".into()),
+        ]);
+
+        assert_eq!(
+            lines,
+            vec![
+                "  warning: lsof not found; results may be incomplete".to_string(),
+                "  warning: permission denied while inspecting processes".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn formats_verbose_entries_as_separate_section() {
+        let lines = format_verbose_entries(&[
+            "lsof: not found on PATH".to_string(),
+            "ps: permission denied".to_string(),
+        ]);
+
+        assert_eq!(
+            lines,
+            vec![
+                "".to_string(),
+                "  verbose log (2 entries):".to_string(),
+                "    lsof: not found on PATH".to_string(),
+                "    ps: permission denied".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn omits_warning_and_verbose_lines_when_empty() {
+        assert!(format_warning_lines(&[]).is_empty());
+        assert!(format_verbose_entries(&[]).is_empty());
+    }
+
+    #[test]
+    fn warning_lines_can_render_real_buffered_errors() {
+        let _guard = verbose_test_lock().lock().unwrap();
+        drain_user_warnings();
+        record_user_warning(&PortError::Timeout {
+            cmd: "lsof -iTCP".into(),
+            ms: 10_000,
+        });
+
+        let drained = drain_user_warnings();
+        let lines = format_warning_lines(&drained);
+
+        assert_eq!(
+            lines,
+            vec!["  warning: system command timed out; results may be incomplete".to_string()]
+        );
+        assert!(drain_user_warnings().is_empty());
     }
 
     fn fake_port(port: u16, pid: u32) -> PortInfo {

@@ -1,5 +1,5 @@
-use crate::model::{LogFile, ProcessTreeNode, RawPortEntry, RawProcessDetails, RawProcessEntry};
 use crate::error::PortError;
+use crate::model::{LogFile, ProcessTreeNode, RawPortEntry, RawProcessDetails, RawProcessEntry};
 #[cfg(target_os = "linux")]
 use crate::util::command_exists;
 use crate::util::{basename, run_output};
@@ -357,9 +357,13 @@ fn linux_pid_socket_inodes(pid: u32) -> Option<Vec<(u64, String)>> {
 
 #[cfg(target_os = "windows")]
 fn windows_listening_ports_raw() -> Vec<RawPortEntry> {
-    let raw = run_output("netstat", ["-ano", "-p", "TCP"], Some(Duration::from_millis(10_000)))
-        .ok()
-        .unwrap_or_default();
+    let raw = run_output(
+        "netstat",
+        ["-ano", "-p", "TCP"],
+        Some(Duration::from_millis(10_000)),
+    )
+    .ok()
+    .unwrap_or_default();
     let mut entries = Vec::new();
     let mut seen = HashMap::new();
     for line in raw.lines().filter(|l| l.contains("LISTENING")) {
@@ -461,7 +465,9 @@ fn unix_process_details(pid: u32) -> Option<RawProcessDetails> {
     ))
 }
 
-fn unix_process_details_from_result(result: Result<String, PortError>) -> Option<RawProcessDetails> {
+fn unix_process_details_from_result(
+    result: Result<String, PortError>,
+) -> Option<RawProcessDetails> {
     let raw = degrade_command_output(result);
     raw.lines()
         .find_map(|line| parse_unix_ps_details(line).map(|(_, details)| details))
@@ -749,8 +755,8 @@ where
                 .split(|b| *b == 0)
                 .filter(|s| !s.is_empty())
                 .map(|s| String::from_utf8_lossy(s).to_string())
-        .collect::<Vec<_>>()
-        .join(" ")
+                .collect::<Vec<_>>()
+                .join(" ")
         })
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| linux_proc_name_with(pid, read_comm));
@@ -825,15 +831,15 @@ fn unix_pid_exists(pid: u32) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{darwin_listening_ports_from_result, unix_process_details_from_result};
     #[cfg(target_os = "linux")]
     use super::unix_batch_process_info_with;
-    use crate::error::PortError;
     #[cfg(target_os = "windows")]
     use super::windows_process_name_with;
+    use super::{darwin_listening_ports_from_result, unix_process_details_from_result};
     #[cfg(target_os = "linux")]
     use super::{linux_batch_cwd_with, linux_proc_details_with};
     use super::{linux_listening_ports_from_proc, unix_process_tree_with};
+    use crate::error::PortError;
     #[cfg(target_os = "linux")]
     use crate::model::RawProcessDetails;
     #[cfg(target_os = "linux")]
@@ -855,12 +861,10 @@ mod tests {
 
     #[test]
     fn unix_process_details_timeout_returns_none() {
-        let details = unix_process_details_from_result(
-            Err(PortError::Timeout {
-                cmd: "ps -p 42".to_string(),
-                ms: 5_000,
-            }),
-        );
+        let details = unix_process_details_from_result(Err(PortError::Timeout {
+            cmd: "ps -p 42".to_string(),
+            ms: 5_000,
+        }));
 
         assert!(details.is_none());
     }
@@ -875,19 +879,22 @@ mod tests {
                 ms: 5_000,
             }),
             |pid| {
-            Some(RawProcessDetails {
-                pid: *pid,
-                ppid: Some(7),
-                stat: "S".to_string(),
-                rss_kb: 64,
-                lstart: Some("Fri Apr 19 12:00:00 2026".to_string()),
-                command: "fallback-from-proc".to_string(),
-            })
-        },
+                Some(RawProcessDetails {
+                    pid: *pid,
+                    ppid: Some(7),
+                    stat: "S".to_string(),
+                    rss_kb: 64,
+                    lstart: Some("Fri Apr 19 12:00:00 2026".to_string()),
+                    command: "fallback-from-proc".to_string(),
+                })
+            },
         );
 
         assert_eq!(details.len(), 1);
-        assert_eq!(details.get(&42).map(|detail| detail.command.as_str()), Some("fallback-from-proc"));
+        assert_eq!(
+            details.get(&42).map(|detail| detail.command.as_str()),
+            Some("fallback-from-proc")
+        );
     }
 
     #[cfg(target_os = "linux")]

@@ -380,7 +380,9 @@ impl DockerFixtureGuard {
             .status()?;
 
         if !status.success() {
-            return Err(std::io::Error::other("failed to start nginx docker fixture"));
+            return Err(std::io::Error::other(
+                "failed to start nginx docker fixture",
+            ));
         }
 
         Ok(Self {
@@ -416,7 +418,9 @@ impl DockerFixtureGuard {
             .status()?;
 
         if !status.success() {
-            return Err(std::io::Error::other("failed to start redis docker fixture"));
+            return Err(std::io::Error::other(
+                "failed to start redis docker fixture",
+            ));
         }
 
         Ok(Self {
@@ -454,7 +458,9 @@ impl DockerFixtureGuard {
             .status()?;
 
         if !status.success() {
-            return Err(std::io::Error::other("failed to start postgres docker fixture"));
+            return Err(std::io::Error::other(
+                "failed to start postgres docker fixture",
+            ));
         }
 
         Ok(Self {

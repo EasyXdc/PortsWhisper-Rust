@@ -1,5 +1,6 @@
 use crate::display;
 use crate::docker;
+use crate::error;
 use crate::model::DockerInfo;
 use crate::model::{PortInfo, RawPortEntry};
 use crate::platform::{self, PlatformScanner};
@@ -45,6 +46,7 @@ pub fn run_watch() -> i32 {
             }
             (current, Vec::new(), next_cache)
         },
+        display_watch_warnings,
         sleep_interruptibly,
         None,
     );
@@ -52,9 +54,10 @@ pub fn run_watch() -> i32 {
     0
 }
 
-fn run_watch_loop<ShouldStop, Refresh, Sleep>(
+fn run_watch_loop<ShouldStop, Refresh, DisplayWarnings, Sleep>(
     should_stop: ShouldStop,
     refresh: Refresh,
+    display_warnings: DisplayWarnings,
     sleep: Sleep,
     max_iterations: Option<usize>,
 ) -> i32
@@ -64,14 +67,19 @@ where
         &HashMap<u16, PortInfo>,
         &DockerWatchCache,
     ) -> (HashMap<u16, PortInfo>, Vec<WatchEvent>, DockerWatchCache),
+    DisplayWarnings: Fn(&[error::PortError]),
     Sleep: Fn(Duration),
 {
     let mut previous: HashMap<u16, _> = HashMap::new();
     let mut docker_cache = DockerWatchCache::default();
     let mut iterations = 0usize;
 
+    error::drain_user_warnings();
+
     while !should_stop() {
         let (current, _events, next_cache) = refresh(&previous, &docker_cache);
+        let warnings = error::drain_user_warnings();
+        display_warnings(&warnings);
         previous = current;
         docker_cache = next_cache;
         iterations += 1;
@@ -82,6 +90,12 @@ where
     }
 
     0
+}
+
+fn display_watch_warnings(warnings: &[error::PortError]) {
+    for warning in warnings {
+        println!("  warning: {}", warning.user_message());
+    }
 }
 
 fn refresh_watch_state_with<DockerMap>(
@@ -212,8 +226,9 @@ fn install_sigint_handler() {
 #[cfg(test)]
 mod tests {
     use super::{
-        diff_watch_events, refresh_watch_state_with, run_watch_loop, DockerWatchCache, WatchEvent,
+        DockerWatchCache, WatchEvent, diff_watch_events, refresh_watch_state_with, run_watch_loop,
     };
+    use crate::error::{PortError, drain_user_warnings, record_user_warning, verbose_test_lock};
     use crate::model::{
         DockerInfo, LogFile, PortInfo, ProcessStatus, ProcessTreeNode, RawPortEntry,
         RawProcessDetails, RawProcessEntry,
@@ -223,8 +238,8 @@ mod tests {
     use std::cell::RefCell;
     use std::collections::HashMap;
     use std::path::PathBuf;
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Mutex;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     #[test]
     fn watch_diff_detects_new_and_removed_without_sleeping() {
@@ -420,6 +435,7 @@ mod tests {
                 refreshes.fetch_add(1, Ordering::SeqCst);
                 (HashMap::new(), Vec::new(), DockerWatchCache::default())
             },
+            |_| {},
             |_| {
                 sleeps.fetch_add(1, Ordering::SeqCst);
                 stopped.store(true, Ordering::SeqCst);
@@ -430,6 +446,64 @@ mod tests {
         assert_eq!(exit, 0);
         assert_eq!(refreshes.load(Ordering::SeqCst), 1);
         assert_eq!(sleeps.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn watch_loop_clears_stale_user_warnings_before_refreshing() {
+        let _guard = verbose_test_lock().lock().unwrap();
+        drain_user_warnings();
+        record_user_warning(&PortError::CommandMissing("lsof".into()));
+
+        let exit = run_watch_loop(
+            || false,
+            |_, _| {
+                assert!(drain_user_warnings().is_empty());
+                (HashMap::new(), Vec::new(), DockerWatchCache::default())
+            },
+            |_| {},
+            |_| {},
+            Some(1),
+        );
+
+        assert_eq!(exit, 0);
+        assert!(drain_user_warnings().is_empty());
+    }
+
+    #[test]
+    fn watch_loop_displays_and_drains_user_warnings_after_each_refresh() {
+        let _guard = verbose_test_lock().lock().unwrap();
+        drain_user_warnings();
+        let refreshes = AtomicUsize::new(0);
+        let displayed = RefCell::new(Vec::<Vec<String>>::new());
+
+        let exit = run_watch_loop(
+            || false,
+            |_, _| {
+                let next = refreshes.fetch_add(1, Ordering::SeqCst) + 1;
+                record_user_warning(&PortError::PermissionDenied(format!("ps-{next}")));
+                (HashMap::new(), Vec::new(), DockerWatchCache::default())
+            },
+            |warnings| {
+                displayed
+                    .borrow_mut()
+                    .push(warnings.iter().map(|warning| warning.user_message()).collect());
+            },
+            |_| {
+                assert!(drain_user_warnings().is_empty());
+            },
+            Some(2),
+        );
+
+        assert_eq!(exit, 0);
+        assert_eq!(refreshes.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            displayed.into_inner(),
+            vec![
+                vec!["permission denied while inspecting processes".to_string()],
+                vec!["permission denied while inspecting processes".to_string()],
+            ]
+        );
+        assert!(drain_user_warnings().is_empty());
     }
 
     struct CountingScanner {
