@@ -724,6 +724,9 @@ mod tests {
 
     #[test]
     fn clean_json_output_is_non_interactive_and_includes_result_lists() {
+        let _guard = verbose_test_lock().lock().unwrap();
+        drain_user_warnings();
+
         let rendered = run_clean_json_with(
             || vec![fake_port(3000, 42), fake_port(3001, 43)],
             |pid, _signal| pid == 42,
@@ -816,6 +819,9 @@ mod tests {
 
     #[test]
     fn clean_json_preserves_nonzero_exit_code_when_any_kill_fails() {
+        let _guard = verbose_test_lock().lock().unwrap();
+        drain_user_warnings();
+
         let exit = run_clean_json_with(
             || vec![fake_port(3000, 42), fake_port(3001, 43)],
             |pid, _signal| pid == 42,
