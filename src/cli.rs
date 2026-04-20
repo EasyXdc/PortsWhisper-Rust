@@ -1,5 +1,6 @@
 use crate::display;
 use crate::error;
+use crate::json_output;
 use crate::kill;
 use crate::logs;
 use crate::ports;
@@ -12,6 +13,7 @@ use crate::watch;
 pub struct ParsedCli {
     pub show_all: bool,
     pub verbose: bool,
+    pub json: bool,
     pub command: CliCommand,
 }
 
@@ -44,17 +46,46 @@ pub fn run(_binary_name: &str, args: Vec<String>) -> i32 {
 }
 
 fn dispatch(parsed: ParsedCli) -> i32 {
+    if parsed.json && !supports_json(&parsed.command) {
+        eprintln!("{}", json_not_supported_message(&parsed.command));
+        return 1;
+    }
+
     match parsed.command {
         CliCommand::List => {
             let mut ports = ports::get_listening_ports(false);
             if !parsed.show_all {
                 ports.retain(|p| scanner::is_dev_process(&p.process_name, &p.command));
             }
+            if parsed.json {
+                return match render_list_json(&ports) {
+                    Ok(output) => {
+                        println!("{output}");
+                        0
+                    }
+                    Err(err) => {
+                        eprintln!("failed to render json for ports: {err}");
+                        1
+                    }
+                };
+            }
             display::display_port_table(&ports, !parsed.show_all);
             print_warning_lines(&error::drain_user_warnings());
             0
         }
         CliCommand::Help => {
+            if parsed.json {
+                return match format_help_json() {
+                    Ok(output) => {
+                        println!("{output}");
+                        0
+                    }
+                    Err(err) => {
+                        eprintln!("failed to render json for ports help: {err}");
+                        1
+                    }
+                };
+            }
             print_help();
             0
         }
@@ -101,16 +132,60 @@ fn dispatch(parsed: ParsedCli) -> i32 {
                     .partial_cmp(&a.cpu)
                     .unwrap_or(std::cmp::Ordering::Equal)
             });
+            if parsed.json {
+                return match render_ps_json(&processes) {
+                    Ok(output) => {
+                        println!("{output}");
+                        0
+                    }
+                    Err(err) => {
+                        eprintln!("failed to render json for ports ps: {err}");
+                        1
+                    }
+                };
+            }
             display::display_process_table(&processes, !parsed.show_all);
             print_warning_lines(&error::drain_user_warnings());
             0
         }
-        CliCommand::Clean => run_clean(),
-        CliCommand::Kill(args) => kill::run_kill(&args),
-        CliCommand::Logs(args) => logs::run_logs(&args),
-        CliCommand::Watch => watch::run_watch(),
-        CliCommand::PortDetail(port) => run_port_detail(port),
+        CliCommand::Clean => {
+            if parsed.json {
+                return run_clean_json();
+            }
+            run_clean()
+        }
+        CliCommand::Kill(args) => {
+            if parsed.json {
+                return kill::run_kill_json(&args);
+            }
+            kill::run_kill(&args)
+        }
+        CliCommand::Logs(args) => {
+            if parsed.json {
+                return logs::run_logs_json(&args);
+            }
+            logs::run_logs(&args)
+        }
+        CliCommand::Watch => {
+            if parsed.json {
+                return watch::run_watch_json();
+            }
+            watch::run_watch()
+        }
+        CliCommand::PortDetail(port) => run_port_detail(port, parsed.json),
         CliCommand::Unknown(other) => {
+            if parsed.json {
+                return match format_unknown_command_json(&other) {
+                    Ok(output) => {
+                        println!("{output}");
+                        1
+                    }
+                    Err(err) => {
+                        eprintln!("failed to render json for ports {other}: {err}");
+                        1
+                    }
+                };
+            }
             for line in unknown_command_lines(&other) {
                 println!("{line}");
             }
@@ -119,14 +194,51 @@ fn dispatch(parsed: ParsedCli) -> i32 {
     }
 }
 
+fn supports_json(command: &CliCommand) -> bool {
+    matches!(
+        command,
+        CliCommand::List
+            | CliCommand::Help
+            | CliCommand::Ps
+            | CliCommand::Clean
+            | CliCommand::Kill(_)
+            | CliCommand::Logs(_)
+            | CliCommand::Watch
+            | CliCommand::PortDetail(_)
+            | CliCommand::Unknown(_)
+    )
+}
+
+fn json_not_supported_message(command: &CliCommand) -> String {
+    format!(
+        "JSON output is not supported for '{}' yet.",
+        command_name(command)
+    )
+}
+
+fn command_name(command: &CliCommand) -> &'static str {
+    match command {
+        CliCommand::List => "ports",
+        CliCommand::Help => "help",
+        CliCommand::Ps => "ps",
+        CliCommand::Clean => "clean",
+        CliCommand::Kill(_) => "kill",
+        CliCommand::Logs(_) => "logs",
+        CliCommand::Watch => "watch",
+        CliCommand::PortDetail(_) => "detail",
+        CliCommand::Unknown(_) => "unknown",
+    }
+}
+
 pub fn parse_args(args: &[String]) -> ParsedCli {
     let show_all = args.iter().any(|a| a == "--all" || a == "-a");
     let verbose = args.iter().any(|a| a == "--verbose");
+    let json = args.iter().any(|a| a == "--json");
     let filtered_args: Vec<String> = args
         .iter()
         .filter(|a| {
             let s = a.as_str();
-            s != "--all" && s != "-a" && s != "--verbose"
+            s != "--all" && s != "-a" && s != "--verbose" && s != "--json"
         })
         .cloned()
         .collect();
@@ -146,16 +258,29 @@ pub fn parse_args(args: &[String]) -> ParsedCli {
     ParsedCli {
         show_all,
         verbose,
+        json,
         command,
     }
 }
 
-fn run_port_detail(port: u32) -> i32 {
+fn run_port_detail(port: u32, json: bool) -> i32 {
     let info = if port <= u16::MAX as u32 {
         ports::get_port_details(port as u16)
     } else {
         None
     };
+    if json {
+        return match render_port_detail_json(port, info.as_ref()) {
+            Ok(output) => {
+                println!("{output}");
+                0
+            }
+            Err(err) => {
+                eprintln!("failed to render json for ports {port}: {err}");
+                1
+            }
+        };
+    }
     display::display_port_detail(info.as_ref());
     print_warning_lines(&error::drain_user_warnings());
     if let Some(info) = info {
@@ -180,6 +305,31 @@ fn run_port_detail(port: u32) -> i32 {
     0
 }
 
+fn render_port_detail_json(
+    port: u32,
+    info: Option<&crate::model::PortInfo>,
+) -> serde_json::Result<String> {
+    render_query_json(format!("ports {port}"), json_output::detail_payload(info))
+}
+
+fn render_list_json(ports: &[crate::model::PortInfo]) -> serde_json::Result<String> {
+    render_query_json("ports", json_output::list_payload(ports))
+}
+
+fn render_ps_json(processes: &[crate::model::ProcessInfo]) -> serde_json::Result<String> {
+    render_query_json("ports ps", json_output::process_list_payload(processes))
+}
+
+fn render_query_json<T>(command: impl Into<String>, data: T) -> serde_json::Result<String>
+where
+    T: serde::Serialize,
+{
+    let warnings = drained_warning_messages();
+    json_output::render_json(
+        &json_output::CommandEnvelope::ok(command, data).with_warnings(warnings),
+    )
+}
+
 fn format_warning_lines(warnings: &[error::PortError]) -> Vec<String> {
     warnings
         .iter()
@@ -191,6 +341,13 @@ fn print_warning_lines(warnings: &[error::PortError]) {
     for line in format_warning_lines(warnings) {
         println!("{line}");
     }
+}
+
+fn drained_warning_messages() -> Vec<String> {
+    error::drain_user_warnings()
+        .into_iter()
+        .map(|warning| warning.user_message())
+        .collect()
 }
 
 fn format_verbose_entries(entries: &[String]) -> Vec<String> {
@@ -209,11 +366,14 @@ fn format_verbose_entries(entries: &[String]) -> Vec<String> {
 mod tests {
     use super::{
         CliCommand, ParsedCli, apply_clean_answer, clean_confirmation_prompt, detail_kill_prompt,
-        format_verbose_entries, format_warning_lines, parse_args, run_clean_with,
-        unknown_command_lines,
+        dispatch, format_help_json, format_unknown_command_json, format_verbose_entries,
+        format_warning_lines, json_not_supported_message, parse_args, render_list_json,
+        render_port_detail_json, render_ps_json, run_clean_json_with, run_clean_with,
+        supports_json, unknown_command_lines,
     };
     use crate::error::{PortError, drain_user_warnings, record_user_warning, verbose_test_lock};
     use crate::model::{PortInfo, ProcessStatus};
+    use serde_json::json;
     use std::cell::RefCell;
 
     fn args(values: &[&str]) -> Vec<String> {
@@ -227,6 +387,7 @@ mod tests {
             ParsedCli {
                 show_all: false,
                 verbose: false,
+                json: false,
                 command: CliCommand::List
             }
         );
@@ -249,6 +410,7 @@ mod tests {
             ParsedCli {
                 show_all: true,
                 verbose: false,
+                json: false,
                 command: CliCommand::List
             }
         );
@@ -257,6 +419,7 @@ mod tests {
             ParsedCli {
                 show_all: true,
                 verbose: false,
+                json: false,
                 command: CliCommand::Ps
             }
         );
@@ -265,6 +428,7 @@ mod tests {
             ParsedCli {
                 show_all: true,
                 verbose: false,
+                json: false,
                 command: CliCommand::Kill(args(&["3000"]))
             }
         );
@@ -274,6 +438,7 @@ mod tests {
     fn recognizes_verbose_flag_globally_and_filters_it_out() {
         let parsed = parse_args(&args(&["--verbose"]));
         assert!(parsed.verbose);
+        assert!(!parsed.json);
         assert_eq!(parsed.command, CliCommand::List);
 
         let parsed = parse_args(&args(&["ps", "--verbose", "--all"]));
@@ -286,6 +451,24 @@ mod tests {
         assert_eq!(parsed.command, CliCommand::Kill(args(&["3000"])));
 
         assert!(!parse_args(&args(&["ps"])).verbose);
+    }
+
+    #[test]
+    fn recognizes_json_flag_globally_and_filters_it_out() {
+        let parsed = parse_args(&args(&["--json"]));
+        assert!(parsed.json);
+        assert_eq!(parsed.command, CliCommand::List);
+
+        let parsed = parse_args(&args(&["ps", "--json", "--all"]));
+        assert!(parsed.json);
+        assert!(parsed.show_all);
+        assert_eq!(parsed.command, CliCommand::Ps);
+
+        let parsed = parse_args(&args(&["kill", "--json", "3000"]));
+        assert!(parsed.json);
+        assert_eq!(parsed.command, CliCommand::Kill(args(&["3000"])));
+
+        assert!(!parse_args(&args(&["ps"])).json);
     }
 
     #[test]
@@ -417,6 +600,308 @@ mod tests {
         assert!(drain_user_warnings().is_empty());
     }
 
+    #[test]
+    fn detail_json_output_includes_null_port_when_missing() {
+        let _guard = verbose_test_lock().lock().unwrap();
+        drain_user_warnings();
+        let rendered = render_port_detail_json(39999, None).expect("json render should succeed");
+
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&rendered).expect("json should parse"),
+            json!({
+                "command": "ports 39999",
+                "ok": true,
+                "data": {
+                    "port": null,
+                },
+                "error": null,
+            })
+        );
+        assert!(drain_user_warnings().is_empty());
+    }
+
+    #[test]
+    fn list_json_output_includes_drained_user_warnings() {
+        let _guard = verbose_test_lock().lock().unwrap();
+        drain_user_warnings();
+        record_user_warning(&PortError::Timeout {
+            cmd: "lsof -iTCP".into(),
+            ms: 10_000,
+        });
+
+        let rendered =
+            render_list_json(&[fake_port(3000, 42)]).expect("json render should succeed");
+
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&rendered).expect("json should parse"),
+            json!({
+                "command": "ports",
+                "ok": true,
+                "data": {
+                    "ports": [
+                        {
+                            "port": 3000,
+                            "pid": 42,
+                            "process_name": "node",
+                            "command": "node server.js",
+                            "cwd": null,
+                            "project_name": null,
+                            "framework": null,
+                            "uptime": null,
+                            "status": "orphaned",
+                            "memory": null
+                        }
+                    ]
+                },
+                "error": null,
+                "warnings": ["system command timed out; results may be incomplete"]
+            })
+        );
+        assert!(drain_user_warnings().is_empty());
+    }
+
+    #[test]
+    fn ps_json_output_includes_drained_user_warnings() {
+        let _guard = verbose_test_lock().lock().unwrap();
+        drain_user_warnings();
+        record_user_warning(&PortError::Timeout {
+            cmd: "ps -ax".into(),
+            ms: 10_000,
+        });
+
+        let rendered = render_ps_json(&[]).expect("json render should succeed");
+
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&rendered).expect("json should parse"),
+            json!({
+                "command": "ports ps",
+                "ok": true,
+                "data": {
+                    "processes": []
+                },
+                "error": null,
+                "warnings": ["system command timed out; results may be incomplete"]
+            })
+        );
+        assert!(drain_user_warnings().is_empty());
+    }
+
+    #[test]
+    fn detail_json_output_includes_drained_user_warnings() {
+        let _guard = verbose_test_lock().lock().unwrap();
+        drain_user_warnings();
+        record_user_warning(&PortError::Timeout {
+            cmd: "lsof -i :39999".into(),
+            ms: 10_000,
+        });
+
+        let rendered = render_port_detail_json(39999, None).expect("json render should succeed");
+
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&rendered).expect("json should parse"),
+            json!({
+                "command": "ports 39999",
+                "ok": true,
+                "data": {
+                    "port": null,
+                },
+                "error": null,
+                "warnings": ["system command timed out; results may be incomplete"]
+            })
+        );
+        assert!(drain_user_warnings().is_empty());
+    }
+
+    #[test]
+    fn supports_json_for_action_commands() {
+        assert!(supports_json(&CliCommand::Clean));
+        assert!(supports_json(&CliCommand::Kill(args(&["3000"]))));
+        assert!(supports_json(&CliCommand::Logs(args(&["logs", "3000"]))));
+        assert!(supports_json(&CliCommand::Help));
+        assert!(supports_json(&CliCommand::Watch));
+        assert!(supports_json(&CliCommand::Unknown("wat".to_string())));
+    }
+
+    #[test]
+    fn clean_json_output_is_non_interactive_and_includes_result_lists() {
+        let rendered = run_clean_json_with(
+            || vec![fake_port(3000, 42), fake_port(3001, 43)],
+            |pid, _signal| pid == 42,
+        )
+        .expect("json render should succeed");
+
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&rendered.output).expect("json should parse"),
+            json!({
+                "command": "ports clean",
+                "ok": true,
+                "data": {
+                    "confirmed": true,
+                    "orphaned": [
+                        {
+                            "port": 3000,
+                            "pid": 42,
+                            "process_name": "node",
+                            "command": "node server.js",
+                            "cwd": null,
+                            "project_name": null,
+                            "framework": null,
+                            "uptime": null,
+                            "status": "orphaned",
+                            "memory": null
+                        },
+                        {
+                            "port": 3001,
+                            "pid": 43,
+                            "process_name": "node",
+                            "command": "node server.js",
+                            "cwd": null,
+                            "project_name": null,
+                            "framework": null,
+                            "uptime": null,
+                            "status": "orphaned",
+                            "memory": null
+                        }
+                    ],
+                    "killed": [42],
+                    "failed": [43]
+                },
+                "error": null
+            })
+        );
+    }
+
+    #[test]
+    fn clean_json_output_includes_drained_user_warnings() {
+        let _guard = verbose_test_lock().lock().unwrap();
+        drain_user_warnings();
+        record_user_warning(&PortError::Timeout {
+            cmd: "lsof -iTCP".into(),
+            ms: 10_000,
+        });
+
+        let rendered = run_clean_json_with(|| vec![fake_port(3000, 42)], |_pid, _signal| true)
+            .expect("json render should succeed");
+
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&rendered.output).expect("json should parse"),
+            json!({
+                "command": "ports clean",
+                "ok": true,
+                "data": {
+                    "confirmed": true,
+                    "orphaned": [
+                        {
+                            "port": 3000,
+                            "pid": 42,
+                            "process_name": "node",
+                            "command": "node server.js",
+                            "cwd": null,
+                            "project_name": null,
+                            "framework": null,
+                            "uptime": null,
+                            "status": "orphaned",
+                            "memory": null
+                        }
+                    ],
+                    "killed": [42],
+                    "failed": []
+                },
+                "error": null,
+                "warnings": ["system command timed out; results may be incomplete"]
+            })
+        );
+        assert!(drain_user_warnings().is_empty());
+    }
+
+    #[test]
+    fn clean_json_preserves_nonzero_exit_code_when_any_kill_fails() {
+        let exit = run_clean_json_with(
+            || vec![fake_port(3000, 42), fake_port(3001, 43)],
+            |pid, _signal| pid == 42,
+        )
+        .expect("json render should succeed")
+        .exit_code;
+
+        assert_eq!(exit, 1);
+    }
+
+    #[test]
+    fn rejects_json_for_unsupported_commands() {
+        for command in [] {
+            assert_eq!(
+                dispatch(ParsedCli {
+                    show_all: false,
+                    verbose: false,
+                    json: true,
+                    command,
+                }),
+                1
+            );
+        }
+    }
+
+    #[test]
+    fn formats_clear_json_not_supported_message() {
+        assert_eq!(
+            json_not_supported_message(&CliCommand::Kill(args(&["3000"]))),
+            "JSON output is not supported for 'kill' yet.".to_string()
+        );
+        assert_eq!(
+            json_not_supported_message(&CliCommand::Help),
+            "JSON output is not supported for 'help' yet.".to_string()
+        );
+    }
+
+    #[test]
+    fn help_json_output_returns_structured_envelope() {
+        let rendered = format_help_json().expect("json render should succeed");
+
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&rendered).expect("json should parse"),
+            json!({
+                "command": "ports help",
+                "ok": true,
+                "data": {
+                    "usage": [
+                        "ports              Show dev server ports",
+                        "ports --all        Show all listening ports",
+                        "ports ps           Show all running dev processes",
+                        "ports ps --all     Show every running process",
+                        "ports 3000         Show details for a port",
+                        "ports kill 3000       Kill process on port/PID",
+                        "ports kill -f 3000    Force kill process on port/PID",
+                        "ports kill 3000-3010   Kill a port range",
+                        "ports logs 3000       Show logs for port/PID",
+                        "ports logs 3000 -f    Follow logs for port/PID",
+                        "ports clean          Clean orphaned/zombie processes",
+                        "ports watch          Watch port changes",
+                        "whoisonport <num> Alias for ports <number>"
+                    ]
+                },
+                "error": null
+            })
+        );
+    }
+
+    #[test]
+    fn unknown_command_json_output_returns_structured_error() {
+        let rendered = format_unknown_command_json("wat").expect("json render should succeed");
+
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&rendered).expect("json should parse"),
+            json!({
+                "command": "ports wat",
+                "ok": false,
+                "data": null,
+                "error": {
+                    "code": "unknown_command",
+                    "message": "Unknown command: wat"
+                }
+            })
+        );
+    }
+
     fn fake_port(port: u16, pid: u32) -> PortInfo {
         PortInfo {
             port,
@@ -443,6 +928,55 @@ fn run_clean() -> i32 {
         prompt_line,
         kill::kill_process,
     )
+}
+
+fn run_clean_json() -> i32 {
+    match run_clean_json_with(scanner::find_orphaned_processes, kill::kill_process) {
+        Ok(result) => {
+            println!("{}", result.output);
+            result.exit_code
+        }
+        Err((message, exit_code)) => {
+            eprintln!("{message}");
+            exit_code
+        }
+    }
+}
+
+fn run_clean_json_with<FindOrphaned, Kill>(
+    find_orphaned: FindOrphaned,
+    kill: Kill,
+) -> Result<CleanJsonOutput, (String, i32)>
+where
+    FindOrphaned: Fn() -> Vec<crate::model::PortInfo>,
+    Kill: Fn(u32, &str) -> bool,
+{
+    let orphaned = find_orphaned();
+    let outcome = apply_clean_json(&orphaned, kill);
+    let warnings = drained_warning_messages();
+    json_output::render_json(
+        &json_output::CommandEnvelope::ok(
+            "ports clean",
+            json_output::clean_payload(
+                outcome.confirmed,
+                &orphaned,
+                outcome.killed.clone(),
+                outcome.failed.clone(),
+            ),
+        )
+        .with_warnings(warnings),
+    )
+    .map(|output| CleanJsonOutput {
+        output,
+        exit_code: outcome.exit_code,
+    })
+    .map_err(|err| (format!("failed to render json for ports clean: {err}"), 1))
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct CleanJsonOutput {
+    output: String,
+    exit_code: i32,
 }
 
 fn run_clean_with<FindOrphaned, Prompt, Kill>(
@@ -497,6 +1031,27 @@ struct CleanPromptOutcome {
     exit_code: i32,
 }
 
+fn apply_clean_json<Kill>(orphaned: &[crate::model::PortInfo], kill: Kill) -> CleanPromptOutcome
+where
+    Kill: Fn(u32, &str) -> bool,
+{
+    let mut killed = Vec::new();
+    let mut failed = Vec::new();
+    for p in orphaned {
+        if kill(p.pid, "SIGTERM") {
+            killed.push(p.pid);
+        } else {
+            failed.push(p.pid);
+        }
+    }
+    CleanPromptOutcome {
+        confirmed: true,
+        exit_code: if failed.is_empty() { 0 } else { 1 },
+        killed,
+        failed,
+    }
+}
+
 fn apply_clean_answer<Kill>(
     orphaned: &[crate::model::PortInfo],
     answer: Option<&str>,
@@ -535,6 +1090,41 @@ fn unknown_command_lines(other: &str) -> [String; 2] {
         style::red(format!("Unknown command: {other}")),
         style::gray("Run ports --help for usage."),
     ]
+}
+
+fn help_usage_lines() -> Vec<String> {
+    vec![
+        "ports              Show dev server ports".to_string(),
+        "ports --all        Show all listening ports".to_string(),
+        "ports ps           Show all running dev processes".to_string(),
+        "ports ps --all     Show every running process".to_string(),
+        "ports 3000         Show details for a port".to_string(),
+        "ports kill 3000       Kill process on port/PID".to_string(),
+        "ports kill -f 3000    Force kill process on port/PID".to_string(),
+        "ports kill 3000-3010   Kill a port range".to_string(),
+        "ports logs 3000       Show logs for port/PID".to_string(),
+        "ports logs 3000 -f    Follow logs for port/PID".to_string(),
+        "ports clean          Clean orphaned/zombie processes".to_string(),
+        "ports watch          Watch port changes".to_string(),
+        "whoisonport <num> Alias for ports <number>".to_string(),
+    ]
+}
+
+fn format_help_json() -> serde_json::Result<String> {
+    json_output::render_json(&json_output::CommandEnvelope::ok(
+        "ports help",
+        json_output::help_payload(&help_usage_lines()),
+    ))
+}
+
+fn format_unknown_command_json(other: &str) -> serde_json::Result<String> {
+    json_output::render_json(
+        &json_output::CommandEnvelope::<json_output::HelpPayload>::err(
+            format!("ports {other}"),
+            "unknown_command",
+            format!("Unknown command: {other}"),
+        ),
+    )
 }
 
 fn detail_kill_prompt(port: u32) -> String {
