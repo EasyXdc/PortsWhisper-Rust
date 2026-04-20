@@ -3,6 +3,7 @@ pub mod display;
 pub mod docker;
 pub mod error;
 pub mod framework;
+pub mod json_output;
 pub mod kill;
 pub mod logs;
 pub mod model;

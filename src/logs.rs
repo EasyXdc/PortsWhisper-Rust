@@ -1,4 +1,5 @@
 use crate::error::PortError;
+use crate::json_output;
 use crate::model::{KillResolutionKind, LogFdKind, LogFile};
 use crate::scanner;
 use crate::style;
@@ -12,6 +13,19 @@ struct LogsRequest {
     err_only: bool,
     lines: String,
     targets: Vec<String>,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct LogsJsonResult {
+    payload: json_output::LogsPayload,
+    exit_code: i32,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct LogsJsonError {
+    code: String,
+    message: String,
+    exit_code: i32,
 }
 
 pub fn run_logs(args: &[String]) -> i32 {
@@ -163,29 +177,257 @@ pub fn run_logs(args: &[String]) -> i32 {
     0
 }
 
+pub fn run_logs_json(args: &[String]) -> i32 {
+    let command = format!("ports {}", args.join(" "));
+    match render_logs_json_result(
+        &command,
+        run_logs_json_with(
+            args,
+            scanner::resolve_kill_target,
+            get_process_log_files,
+            read_log_output,
+            get_system_log_command,
+            run_shell_output,
+        ),
+    ) {
+        Ok((output, exit_code)) => {
+            println!("{output}");
+            exit_code
+        }
+        Err(err) => {
+            eprintln!("failed to render json for ports logs: {err}");
+            1
+        }
+    }
+}
+
+fn render_logs_json_result(
+    command: &str,
+    result: Result<LogsJsonResult, LogsJsonError>,
+) -> serde_json::Result<(String, i32)> {
+    let warnings = crate::error::drain_user_warnings()
+        .into_iter()
+        .map(|warning| warning.user_message())
+        .collect::<Vec<_>>();
+    match result {
+        Ok(result) => json_output::render_json(
+            &json_output::CommandEnvelope::ok(command, result.payload).with_warnings(warnings),
+        )
+        .map(|output| (output, result.exit_code)),
+        Err(err) => json_output::render_json(
+            &json_output::CommandEnvelope::<json_output::LogsPayload>::err(
+                command,
+                err.code,
+                err.message,
+            )
+            .with_warnings(warnings),
+        )
+        .map(|output| (output, err.exit_code)),
+    }
+}
+
 fn parse_logs_request(args: &[String]) -> LogsRequest {
     let follow = args.iter().any(|a| a == "-f" || a == "--follow");
     let err_only = args.iter().any(|a| a == "--err");
     let lines = parse_lines(args).to_string();
-    let targets = args
-        .iter()
-        .skip(1)
-        .filter(|a| {
-            let s = a.as_str();
-            s != "-f"
-                && s != "--follow"
-                && s != "--err"
-                && s != "--lines"
-                && !s.starts_with("--lines=")
-                && s != lines
-        })
-        .cloned()
-        .collect();
+    let mut targets = Vec::new();
+    let mut iter = args.iter().skip(1).peekable();
+    while let Some(arg) = iter.next() {
+        let s = arg.as_str();
+        if s == "-f" || s == "--follow" || s == "--err" || s.starts_with("--lines=") {
+            continue;
+        }
+        if s == "--lines" {
+            iter.next();
+            continue;
+        }
+        targets.push(arg.clone());
+    }
     LogsRequest {
         follow,
         err_only,
         lines,
         targets,
+    }
+}
+
+fn run_logs_json_with<Resolve, Discover, ReadLog, SystemCmd, RunSystem>(
+    args: &[String],
+    resolve: Resolve,
+    discover_log_files: Discover,
+    read_log: ReadLog,
+    system_log_command: SystemCmd,
+    run_system_log: RunSystem,
+) -> Result<LogsJsonResult, LogsJsonError>
+where
+    Resolve: Fn(u32) -> Option<crate::model::KillTargetResolution>,
+    Discover: Fn(u32) -> Vec<LogFile>,
+    ReadLog: Fn(&Path, &str, bool) -> Result<String, String>,
+    SystemCmd: Fn(u32, bool) -> Option<String>,
+    RunSystem: Fn(&str) -> Result<String, String>,
+{
+    let parsed = parse_logs_request(args);
+    if parsed.follow {
+        return Err(LogsJsonError {
+            code: "unsupported_follow".to_string(),
+            message: "follow mode is not supported with --json yet".to_string(),
+            exit_code: 1,
+        });
+    }
+    if parsed.targets.is_empty() {
+        return Err(LogsJsonError {
+            code: "usage".to_string(),
+            message: "Usage: ports logs <port|pid> [-f] [--lines=N] [--err]".to_string(),
+            exit_code: 1,
+        });
+    }
+    let Ok(target) = parsed.targets[0].parse::<u32>() else {
+        return Err(LogsJsonError {
+            code: "invalid_target".to_string(),
+            message: format!("\"{}\" is not a valid port/PID", parsed.targets[0]),
+            exit_code: 1,
+        });
+    };
+    let Some(resolved) = resolve(target) else {
+        let message = if target <= 65_535 {
+            format!("No listener on :{target} and no process with PID {target}")
+        } else {
+            format!("No process with PID {target}")
+        };
+        return Err(LogsJsonError {
+            code: "target_not_found".to_string(),
+            message,
+            exit_code: 1,
+        });
+    };
+
+    let process_name = resolved
+        .info
+        .as_ref()
+        .map(|p| p.process_name.clone())
+        .unwrap_or_else(|| "unknown".to_string());
+    let log_files = discover_log_files(resolved.pid);
+
+    if parsed.err_only {
+        return match select_log_file(&log_files, true) {
+            LogSelection::Tail(file) => Ok(LogsJsonResult {
+                payload: json_output::logs_payload(
+                    resolved.pid,
+                    resolved.port,
+                    process_name,
+                    false,
+                    parsed.lines.clone(),
+                    true,
+                    Some(log_source_payload(&file, None)),
+                    Some(
+                        read_log(&file.path, &parsed.lines, false).map_err(|message| {
+                            LogsJsonError {
+                                code: "log_read_failed".to_string(),
+                                message,
+                                exit_code: 1,
+                            }
+                        })?,
+                    ),
+                ),
+                exit_code: 0,
+            }),
+            LogSelection::NoStderr => Ok(LogsJsonResult {
+                payload: json_output::logs_payload(
+                    resolved.pid,
+                    resolved.port,
+                    process_name,
+                    false,
+                    parsed.lines,
+                    true,
+                    None,
+                    None,
+                ),
+                exit_code: 0,
+            }),
+            _ => unreachable!("stderr selection should not require user choice"),
+        };
+    }
+
+    match select_log_file(&log_files, false) {
+        LogSelection::Tail(file) => Ok(LogsJsonResult {
+            payload: json_output::logs_payload(
+                resolved.pid,
+                resolved.port,
+                process_name,
+                false,
+                parsed.lines.clone(),
+                false,
+                Some(log_source_payload(&file, None)),
+                Some(
+                    read_log(&file.path, &parsed.lines, false).map_err(|message| {
+                        LogsJsonError {
+                            code: "log_read_failed".to_string(),
+                            message,
+                            exit_code: 1,
+                        }
+                    })?,
+                ),
+            ),
+            exit_code: 0,
+        }),
+        LogSelection::NeedsUserSelection => Err(LogsJsonError {
+            code: "multiple_log_files".to_string(),
+            message: "multiple log files found; interactive selection is not supported with --json"
+                .to_string(),
+            exit_code: 1,
+        }),
+        LogSelection::NoFiles => {
+            if let Some(cmd) = system_log_command(resolved.pid, false) {
+                return Ok(LogsJsonResult {
+                    payload: json_output::logs_payload(
+                        resolved.pid,
+                        resolved.port,
+                        process_name,
+                        false,
+                        parsed.lines,
+                        false,
+                        Some(json_output::LogSourcePayload {
+                            kind: "system".to_string(),
+                            path: None,
+                            command: Some(cmd.clone()),
+                        }),
+                        Some(run_system_log(&cmd).map_err(|message| LogsJsonError {
+                            code: "system_log_failed".to_string(),
+                            message,
+                            exit_code: 1,
+                        })?),
+                    ),
+                    exit_code: 0,
+                });
+            }
+            Ok(LogsJsonResult {
+                payload: json_output::logs_payload(
+                    resolved.pid,
+                    resolved.port,
+                    process_name,
+                    false,
+                    parsed.lines,
+                    false,
+                    None,
+                    None,
+                ),
+                exit_code: 0,
+            })
+        }
+        LogSelection::NoStderr => unreachable!("err_only is false"),
+    }
+}
+
+fn log_source_payload(file: &LogFile, command: Option<String>) -> json_output::LogSourcePayload {
+    json_output::LogSourcePayload {
+        kind: match file.fd {
+            LogFdKind::Stdout => "stdout",
+            LogFdKind::Stderr => "stderr",
+            LogFdKind::File => "file",
+        }
+        .to_string(),
+        path: Some(file.path.to_string_lossy().into_owned()),
+        command,
     }
 }
 
@@ -452,13 +694,16 @@ fn log_header_lines(port_label: &str, pid: u32, process_name: &str) -> [String; 
 #[cfg(test)]
 mod tests {
     use super::{
-        LogSelection, LogSelectionChoice, TailCommand, build_tail_command, choose_log_file_index,
-        get_process_cwd_from_lsof_result, is_log_like_path, log_files_from_lsof_result,
-        log_header_lines, logs_usage_lines, parse_lines, parse_logs_request, select_log_file,
-        sort_and_dedupe_log_files,
+        LogSelection, LogSelectionChoice, LogsJsonError, LogsJsonResult, TailCommand,
+        build_tail_command, choose_log_file_index, get_process_cwd_from_lsof_result,
+        is_log_like_path, log_files_from_lsof_result, log_header_lines, logs_usage_lines,
+        parse_lines, parse_logs_request, render_logs_json_result, run_logs_json_with,
+        select_log_file, sort_and_dedupe_log_files,
     };
-    use crate::error::PortError;
-    use crate::model::{LogFdKind, LogFile};
+    use crate::error::{PortError, drain_user_warnings, record_user_warning, verbose_test_lock};
+    use crate::model::{
+        KillResolutionKind, KillTargetResolution, LogFdKind, LogFile, PortInfo, ProcessStatus,
+    };
     use std::path::PathBuf;
 
     fn args(values: &[&str]) -> Vec<String> {
@@ -610,6 +855,14 @@ mod tests {
     }
 
     #[test]
+    fn logs_argument_parsing_keeps_target_when_it_matches_lines_value() {
+        let parsed = parse_logs_request(&args(&["logs", "3000", "--lines", "3000"]));
+
+        assert_eq!(parsed.targets, vec!["3000".to_string()]);
+        assert_eq!(parsed.lines, "3000");
+    }
+
+    #[test]
     fn lsof_timeout_degrades_to_empty_log_discovery_result() {
         let files = log_files_from_lsof_result(Err(PortError::Timeout {
             cmd: "lsof -p 42".to_string(),
@@ -627,6 +880,258 @@ mod tests {
         }));
 
         assert_eq!(cwd, None);
+    }
+
+    #[test]
+    fn json_logs_result_captures_non_follow_output_from_log_file() {
+        let result = run_logs_json_with(
+            &args(&["logs", "3000", "--lines=5"]),
+            |target| match target {
+                3000 => Some(KillTargetResolution {
+                    pid: 42,
+                    via: KillResolutionKind::Port,
+                    port: Some(3000),
+                    info: Some(fake_port(3000, 42)),
+                }),
+                _ => None,
+            },
+            |_pid| vec![log_file("/app/out.log", LogFdKind::Stdout, "redirect", 1)],
+            |_path, lines, follow| {
+                assert_eq!(lines, "5");
+                assert!(!follow);
+                Ok("ready\nrequest /health".to_string())
+            },
+            |_pid, _follow| None,
+            |_cmd| unreachable!("system logs should not be used when a file exists"),
+        )
+        .expect("json logs should succeed");
+
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.payload.pid, 42);
+        assert_eq!(result.payload.port, Some(3000));
+        assert_eq!(result.payload.process_name, "node");
+        assert!(!result.payload.follow);
+        assert_eq!(result.payload.lines, "5");
+        assert!(!result.payload.stderr_only);
+        assert_eq!(
+            result.payload.output.as_deref(),
+            Some("ready\nrequest /health")
+        );
+        let source = result.payload.source.expect("log source should be present");
+        assert_eq!(source.kind, "stdout");
+        assert_eq!(source.path.as_deref(), Some("/app/out.log"));
+        assert_eq!(source.command, None);
+    }
+
+    #[test]
+    fn json_logs_follow_mode_returns_error_instead_of_text_fallback() {
+        let err = run_logs_json_with(
+            &args(&["logs", "3000", "-f"]),
+            |target| match target {
+                3000 => Some(KillTargetResolution {
+                    pid: 42,
+                    via: KillResolutionKind::Port,
+                    port: Some(3000),
+                    info: Some(fake_port(3000, 42)),
+                }),
+                _ => None,
+            },
+            |_pid| vec![log_file("/app/out.log", LogFdKind::Stdout, "redirect", 1)],
+            |_path, _lines, _follow| unreachable!("follow mode should be rejected before reading"),
+            |_pid, _follow| unreachable!("system command should not be consulted"),
+            |_cmd| unreachable!("system command should not execute"),
+        )
+        .expect_err("follow mode should be rejected for json");
+
+        assert_eq!(err.exit_code, 1);
+        assert!(err.message.contains("follow"));
+        assert!(err.message.contains("--json"));
+    }
+
+    #[test]
+    fn json_logs_failure_paths_render_structured_error_envelopes() {
+        let follow_json = render_logs_json_result(
+            "ports logs 3000 -f",
+            run_logs_json_with(
+                &args(&["logs", "3000", "-f"]),
+                |_target| None,
+                |_pid| Vec::new(),
+                |_path, _lines, _follow| Ok(String::new()),
+                |_pid, _follow| None,
+                |_cmd| Ok(String::new()),
+            ),
+        )
+        .expect("json should render");
+        let invalid_json = render_logs_json_result(
+            "ports logs abc",
+            run_logs_json_with(
+                &args(&["logs", "abc"]),
+                |_target| None,
+                |_pid| Vec::new(),
+                |_path, _lines, _follow| Ok(String::new()),
+                |_pid, _follow| None,
+                |_cmd| Ok(String::new()),
+            ),
+        )
+        .expect("json should render");
+        let unresolved_json = render_logs_json_result(
+            "ports logs 3000",
+            run_logs_json_with(
+                &args(&["logs", "3000"]),
+                |_target| None,
+                |_pid| Vec::new(),
+                |_path, _lines, _follow| Ok(String::new()),
+                |_pid, _follow| None,
+                |_cmd| Ok(String::new()),
+            ),
+        )
+        .expect("json should render");
+        let multi_file_json = render_logs_json_result(
+            "ports logs 3000",
+            run_logs_json_with(
+                &args(&["logs", "3000"]),
+                |target| match target {
+                    3000 => Some(KillTargetResolution {
+                        pid: 42,
+                        via: KillResolutionKind::Port,
+                        port: Some(3000),
+                        info: Some(fake_port(3000, 42)),
+                    }),
+                    _ => None,
+                },
+                |_pid| {
+                    vec![
+                        log_file("/app/out.log", LogFdKind::Stdout, "redirect", 1),
+                        log_file("/app/err.log", LogFdKind::Stderr, "redirect", 1),
+                    ]
+                },
+                |_path, _lines, _follow| Ok(String::new()),
+                |_pid, _follow| None,
+                |_cmd| Ok(String::new()),
+            ),
+        )
+        .expect("json should render");
+
+        let follow =
+            serde_json::from_str::<serde_json::Value>(&follow_json.0).expect("json should parse");
+        let invalid =
+            serde_json::from_str::<serde_json::Value>(&invalid_json.0).expect("json should parse");
+        let unresolved = serde_json::from_str::<serde_json::Value>(&unresolved_json.0)
+            .expect("json should parse");
+        let multi_file = serde_json::from_str::<serde_json::Value>(&multi_file_json.0)
+            .expect("json should parse");
+
+        assert_eq!(follow["ok"], false);
+        assert_eq!(follow["error"]["code"], "unsupported_follow");
+        assert_eq!(invalid["ok"], false);
+        assert_eq!(invalid["error"]["code"], "invalid_target");
+        assert_eq!(unresolved["ok"], false);
+        assert_eq!(unresolved["error"]["code"], "target_not_found");
+        assert_eq!(multi_file["ok"], false);
+        assert_eq!(multi_file["error"]["code"], "multiple_log_files");
+    }
+
+    #[test]
+    fn logs_json_success_includes_drained_user_warnings() {
+        let _guard = verbose_test_lock().lock().unwrap();
+        drain_user_warnings();
+        record_user_warning(&PortError::Timeout {
+            cmd: "lsof -p 42".to_string(),
+            ms: 3000,
+        });
+
+        let rendered = render_logs_json_result(
+            "ports logs 3000",
+            Ok(LogsJsonResult {
+                payload: crate::json_output::logs_payload(
+                    42,
+                    Some(3000),
+                    "node",
+                    false,
+                    "5",
+                    false,
+                    None,
+                    Some("ready".to_string()),
+                ),
+                exit_code: 0,
+            }),
+        )
+        .expect("json should render");
+
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&rendered.0).expect("json should parse"),
+            serde_json::json!({
+                "command": "ports logs 3000",
+                "ok": true,
+                "data": {
+                    "pid": 42,
+                    "port": 3000,
+                    "process_name": "node",
+                    "follow": false,
+                    "lines": "5",
+                    "stderr_only": false,
+                    "source": null,
+                    "output": "ready"
+                },
+                "error": null,
+                "warnings": ["system command timed out; results may be incomplete"]
+            })
+        );
+        assert!(drain_user_warnings().is_empty());
+    }
+
+    #[test]
+    fn logs_json_error_includes_drained_user_warnings() {
+        let _guard = verbose_test_lock().lock().unwrap();
+        drain_user_warnings();
+        record_user_warning(&PortError::Timeout {
+            cmd: "lsof -p 42".to_string(),
+            ms: 3000,
+        });
+
+        let rendered = render_logs_json_result(
+            "ports logs abc",
+            Err(LogsJsonError {
+                code: "invalid_target".to_string(),
+                message: "\"abc\" is not a valid port/PID".to_string(),
+                exit_code: 1,
+            }),
+        )
+        .expect("json should render");
+
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&rendered.0).expect("json should parse"),
+            serde_json::json!({
+                "command": "ports logs abc",
+                "ok": false,
+                "data": null,
+                "error": {
+                    "code": "invalid_target",
+                    "message": "\"abc\" is not a valid port/PID"
+                },
+                "warnings": ["system command timed out; results may be incomplete"]
+            })
+        );
+        assert!(drain_user_warnings().is_empty());
+    }
+
+    fn fake_port(port: u16, pid: u32) -> PortInfo {
+        PortInfo {
+            port,
+            pid,
+            process_name: "node".to_string(),
+            raw_name: "node".to_string(),
+            command: "node server.js".to_string(),
+            cwd: None,
+            project_name: None,
+            framework: None,
+            uptime: None,
+            start_time: None,
+            status: ProcessStatus::Healthy,
+            memory: None,
+            git_branch: None,
+            process_tree: Vec::new(),
+        }
     }
 
     fn log_file(path: &str, fd: LogFdKind, kind: &str, priority: u8) -> LogFile {
@@ -660,6 +1165,29 @@ fn tail_file(path: &Path, lines: &str, follow: bool) -> i32 {
         0
     } else {
         1
+    }
+}
+
+fn read_log_output(path: &Path, lines: &str, follow: bool) -> Result<String, String> {
+    if follow {
+        return Err("follow mode is not supported for collected log output".to_string());
+    }
+    let output = match build_tail_command(path, lines, false) {
+        TailCommand::PowerShell { command } => Command::new("powershell")
+            .args(["-Command", &command])
+            .stdin(Stdio::null())
+            .output(),
+        TailCommand::Argv(argv) => {
+            let mut cmd = Command::new(&argv[0]);
+            cmd.args(&argv[1..]).stdin(Stdio::null()).output()
+        }
+    }
+    .map_err(|err| err.to_string())?;
+
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).into_owned())
     }
 }
 
@@ -712,5 +1240,26 @@ fn run_shell(cmd: &str) -> i32 {
         0
     } else {
         1
+    }
+}
+
+fn run_shell_output(cmd: &str) -> Result<String, String> {
+    let output = if cfg!(target_os = "windows") {
+        Command::new("cmd")
+            .args(["/C", cmd])
+            .stdin(Stdio::null())
+            .output()
+    } else {
+        Command::new("sh")
+            .args(["-c", cmd])
+            .stdin(Stdio::null())
+            .output()
+    }
+    .map_err(|err| err.to_string())?;
+
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).into_owned())
     }
 }

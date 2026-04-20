@@ -1,6 +1,7 @@
 use crate::display;
 use crate::docker;
 use crate::error;
+use crate::json_output;
 use crate::model::DockerInfo;
 use crate::model::{PortInfo, RawPortEntry};
 use crate::platform::{self, PlatformScanner};
@@ -54,6 +55,24 @@ pub fn run_watch() -> i32 {
     0
 }
 
+pub fn run_watch_json() -> i32 {
+    install_sigint_handler();
+    run_watch_json_loop(
+        || STOP_REQUESTED.load(Ordering::SeqCst),
+        |previous, docker_cache| {
+            refresh_watch_state_with(
+                platform::native_scanner(),
+                previous,
+                docker_cache,
+                docker::batch_docker_info,
+            )
+        },
+        |line| println!("{line}"),
+        sleep_interruptibly,
+        None,
+    )
+}
+
 fn run_watch_loop<ShouldStop, Refresh, DisplayWarnings, Sleep>(
     should_stop: ShouldStop,
     refresh: Refresh,
@@ -80,6 +99,63 @@ where
         let (current, _events, next_cache) = refresh(&previous, &docker_cache);
         let warnings = error::drain_user_warnings();
         display_warnings(&warnings);
+        previous = current;
+        docker_cache = next_cache;
+        iterations += 1;
+        if max_iterations.is_some_and(|max| iterations >= max) {
+            break;
+        }
+        sleep(Duration::from_millis(2000));
+    }
+
+    0
+}
+
+fn run_watch_json_loop<ShouldStop, Refresh, EmitLine, Sleep>(
+    should_stop: ShouldStop,
+    refresh: Refresh,
+    emit_line: EmitLine,
+    sleep: Sleep,
+    max_iterations: Option<usize>,
+) -> i32
+where
+    ShouldStop: Fn() -> bool,
+    Refresh: Fn(
+        &HashMap<u16, PortInfo>,
+        &DockerWatchCache,
+    ) -> (HashMap<u16, PortInfo>, Vec<WatchEvent>, DockerWatchCache),
+    EmitLine: Fn(String),
+    Sleep: Fn(Duration),
+{
+    let mut previous: HashMap<u16, _> = HashMap::new();
+    let mut docker_cache = DockerWatchCache::default();
+    let mut iterations = 0usize;
+
+    error::drain_user_warnings();
+
+    while !should_stop() {
+        let (current, events, next_cache) = refresh(&previous, &docker_cache);
+        let warnings = error::drain_user_warnings();
+        for warning in warnings {
+            if let Ok(line) = json_output::render_json(&json_output::CommandEnvelope::ok(
+                "ports watch",
+                json_output::watch_warning_payload(warning.user_message()),
+            )) {
+                emit_line(line);
+            }
+        }
+        for event in events {
+            let (action, info) = match event {
+                WatchEvent::New(info) => ("new", info),
+                WatchEvent::Removed(info) => ("removed", info),
+            };
+            if let Ok(line) = json_output::render_json(&json_output::CommandEnvelope::ok(
+                "ports watch",
+                json_output::watch_event_payload(action, &info),
+            )) {
+                emit_line(line);
+            }
+        }
         previous = current;
         docker_cache = next_cache;
         iterations += 1;
@@ -226,7 +302,8 @@ fn install_sigint_handler() {
 #[cfg(test)]
 mod tests {
     use super::{
-        DockerWatchCache, WatchEvent, diff_watch_events, refresh_watch_state_with, run_watch_loop,
+        DockerWatchCache, WatchEvent, diff_watch_events, refresh_watch_state_with,
+        run_watch_json_loop, run_watch_loop,
     };
     use crate::error::{PortError, drain_user_warnings, record_user_warning, verbose_test_lock};
     use crate::model::{
@@ -484,9 +561,12 @@ mod tests {
                 (HashMap::new(), Vec::new(), DockerWatchCache::default())
             },
             |warnings| {
-                displayed
-                    .borrow_mut()
-                    .push(warnings.iter().map(|warning| warning.user_message()).collect());
+                displayed.borrow_mut().push(
+                    warnings
+                        .iter()
+                        .map(|warning| warning.user_message())
+                        .collect(),
+                );
             },
             |_| {
                 assert!(drain_user_warnings().is_empty());
@@ -504,6 +584,60 @@ mod tests {
             ]
         );
         assert!(drain_user_warnings().is_empty());
+    }
+
+    #[test]
+    fn watch_json_outputs_json_lines_for_events_and_warnings() {
+        let lines = RefCell::new(Vec::<String>::new());
+        let refreshes = AtomicUsize::new(0);
+
+        let exit = run_watch_json_loop(
+            || false,
+            |_, _| {
+                let iteration = refreshes.fetch_add(1, Ordering::SeqCst);
+                if iteration == 0 {
+                    record_user_warning(&PortError::PermissionDenied("ps".into()));
+                    (
+                        HashMap::from([(3000, port_with_pid(3000, 30))]),
+                        vec![WatchEvent::New(port_with_pid(3000, 30))],
+                        DockerWatchCache::default(),
+                    )
+                } else {
+                    (
+                        HashMap::new(),
+                        vec![WatchEvent::Removed(port_with_pid(3000, 30))],
+                        DockerWatchCache::default(),
+                    )
+                }
+            },
+            |line| lines.borrow_mut().push(line),
+            |_| {},
+            Some(2),
+        );
+
+        assert_eq!(exit, 0);
+        let rendered = lines.into_inner();
+        assert_eq!(rendered.len(), 3);
+
+        let warning =
+            serde_json::from_str::<serde_json::Value>(&rendered[0]).expect("json should parse");
+        let new_event =
+            serde_json::from_str::<serde_json::Value>(&rendered[1]).expect("json should parse");
+        let removed_event =
+            serde_json::from_str::<serde_json::Value>(&rendered[2]).expect("json should parse");
+
+        assert_eq!(warning["command"], "ports watch");
+        assert_eq!(warning["ok"], true);
+        assert_eq!(warning["data"]["type"], "warning");
+        assert_eq!(
+            warning["data"]["message"],
+            "permission denied while inspecting processes"
+        );
+        assert_eq!(new_event["data"]["type"], "event");
+        assert_eq!(new_event["data"]["action"], "new");
+        assert_eq!(new_event["data"]["port"]["port"], 3000);
+        assert_eq!(removed_event["data"]["action"], "removed");
+        assert_eq!(removed_event["data"]["port"]["pid"], 30);
     }
 
     struct CountingScanner {
