@@ -40,12 +40,11 @@ fn parse_docker_host_ports(s: &str) -> Vec<u16> {
     for chunk in s.split(',') {
         if let Some(arrow) = chunk.find("->") {
             let before = &chunk[..arrow];
-            if let Some(idx) = before.rfind(':') {
-                if let Ok(port) = before[idx + 1..].parse::<u16>() {
-                    if seen.insert(port) {
-                        ports.push(port);
-                    }
-                }
+            if let Some(idx) = before.rfind(':')
+                && let Ok(port) = before[idx + 1..].parse::<u16>()
+                && seen.insert(port)
+            {
+                ports.push(port);
             }
         }
     }

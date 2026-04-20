@@ -544,6 +544,26 @@ fn current_time_label() -> String {
 }
 
 #[cfg(test)]
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::new();
+    let mut esc = false;
+    for ch in s.chars() {
+        if esc {
+            if ch == 'm' {
+                esc = false;
+            }
+            continue;
+        }
+        if ch == '\x1b' {
+            esc = true;
+            continue;
+        }
+        out.push(ch);
+    }
+    out
+}
+
+#[cfg(test)]
 mod tests {
     use super::{
         PORT_HEADERS, PROCESS_HEADERS, port_summary_line, port_table_rows, process_table_rows,
@@ -780,24 +800,4 @@ mod tests {
             status_raw: "S".to_string(),
         }
     }
-}
-
-#[cfg(test)]
-fn strip_ansi(s: &str) -> String {
-    let mut out = String::new();
-    let mut esc = false;
-    for ch in s.chars() {
-        if esc {
-            if ch == 'm' {
-                esc = false;
-            }
-            continue;
-        }
-        if ch == '\x1b' {
-            esc = true;
-            continue;
-        }
-        out.push(ch);
-    }
-    out
 }

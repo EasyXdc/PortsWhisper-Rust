@@ -17,9 +17,19 @@ impl ExitCode {
 pub enum PortError {
     CommandMissing(String),
     PermissionDenied(String),
-    Timeout { cmd: String, ms: u64 },
-    ExecFailed { cmd: String, exit: i32, stderr: String },
-    ParseFailed { cmd: String, reason: String },
+    Timeout {
+        cmd: String,
+        ms: u64,
+    },
+    ExecFailed {
+        cmd: String,
+        exit: i32,
+        stderr: String,
+    },
+    ParseFailed {
+        cmd: String,
+        reason: String,
+    },
     Io(std::io::Error),
 }
 
@@ -32,6 +42,16 @@ impl PortError {
             Self::ExecFailed { .. } => "exec failed",
             Self::ParseFailed { .. } => "parse failed",
             Self::Io(_) => "io error",
+        }
+    }
+
+    pub fn user_message(&self) -> String {
+        match self {
+            Self::CommandMissing(cmd) => format!("{cmd} not found; results may be incomplete"),
+            Self::PermissionDenied(_) => "permission denied while inspecting processes".into(),
+            Self::Timeout { .. } => "system command timed out; results may be incomplete".into(),
+            Self::ParseFailed { .. } => "system process output could not be parsed".into(),
+            Self::ExecFailed { .. } | Self::Io(_) => "system inspection failed".into(),
         }
     }
 
@@ -70,6 +90,11 @@ fn verbose_buf() -> &'static Mutex<Vec<String>> {
     B.get_or_init(|| Mutex::new(Vec::new()))
 }
 
+fn user_warning_buf() -> &'static Mutex<Vec<PortError>> {
+    static B: OnceLock<Mutex<Vec<PortError>>> = OnceLock::new();
+    B.get_or_init(|| Mutex::new(Vec::new()))
+}
+
 pub fn set_verbose_enabled(on: bool) {
     VERBOSE_ON.store(on, Ordering::SeqCst);
 }
@@ -92,6 +117,36 @@ pub fn verbose_log(msg: impl Into<String>) {
 
 pub fn verbose_log_port_error(e: &PortError) {
     verbose_log(e.full());
+}
+
+pub fn record_user_warning(e: &PortError) {
+    if let Ok(mut buf) = user_warning_buf().lock() {
+        buf.push(match e {
+            PortError::CommandMissing(cmd) => PortError::CommandMissing(cmd.clone()),
+            PortError::PermissionDenied(cmd) => PortError::PermissionDenied(cmd.clone()),
+            PortError::Timeout { cmd, ms } => PortError::Timeout {
+                cmd: cmd.clone(),
+                ms: *ms,
+            },
+            PortError::ExecFailed { cmd, exit, stderr } => PortError::ExecFailed {
+                cmd: cmd.clone(),
+                exit: *exit,
+                stderr: stderr.clone(),
+            },
+            PortError::ParseFailed { cmd, reason } => PortError::ParseFailed {
+                cmd: cmd.clone(),
+                reason: reason.clone(),
+            },
+            PortError::Io(io) => PortError::Io(std::io::Error::new(io.kind(), io.to_string())),
+        });
+    }
+}
+
+pub fn drain_user_warnings() -> Vec<PortError> {
+    user_warning_buf()
+        .lock()
+        .map(|mut buf| std::mem::take(&mut *buf))
+        .unwrap_or_default()
 }
 
 pub fn drain_verbose_log() -> Vec<String> {
@@ -174,6 +229,43 @@ mod tests {
     }
 
     #[test]
+    fn user_message_summarizes_user_facing_errors() {
+        assert_eq!(
+            PortError::CommandMissing("lsof".into()).user_message(),
+            "lsof not found; results may be incomplete"
+        );
+        assert_eq!(
+            PortError::PermissionDenied("lsof".into()).user_message(),
+            "permission denied while inspecting processes"
+        );
+        assert_eq!(
+            PortError::Timeout {
+                cmd: "lsof -iTCP".into(),
+                ms: 10_000,
+            }
+            .user_message(),
+            "system command timed out; results may be incomplete"
+        );
+        assert_eq!(
+            PortError::ParseFailed {
+                cmd: "ps".into(),
+                reason: "unexpected column count".into(),
+            }
+            .user_message(),
+            "system process output could not be parsed"
+        );
+        assert_eq!(
+            PortError::ExecFailed {
+                cmd: "ps".into(),
+                exit: 2,
+                stderr: "bad flag".into(),
+            }
+            .user_message(),
+            "system inspection failed"
+        );
+    }
+
+    #[test]
     fn verbose_log_ignores_messages_when_disabled() {
         let _guard = verbose_test_lock().lock().unwrap();
         set_verbose_enabled(false);
@@ -203,6 +295,30 @@ mod tests {
     }
 
     #[test]
+    fn verbose_log_port_error_keeps_full_details_not_user_summary() {
+        let _guard = verbose_test_lock().lock().unwrap();
+        set_verbose_enabled(true);
+        drain_verbose_log();
+
+        let error = PortError::ExecFailed {
+            cmd: "ps".into(),
+            exit: 2,
+            stderr: "bad flag".into(),
+        };
+        let summary = error.user_message();
+        let full = error.full();
+
+        verbose_log_port_error(&error);
+
+        let drained = drain_verbose_log();
+        assert_eq!(drained, vec![full]);
+        assert_ne!(drained[0], summary);
+        assert!(drained[0].contains("bad flag"));
+
+        set_verbose_enabled(false);
+    }
+
+    #[test]
     fn verbose_log_ring_buffer_drops_oldest_beyond_cap() {
         let _guard = verbose_test_lock().lock().unwrap();
         set_verbose_enabled(true);
@@ -219,5 +335,26 @@ mod tests {
             Some(format!("msg-{}", VERBOSE_CAP + 9)).as_deref()
         );
         set_verbose_enabled(false);
+    }
+
+    #[test]
+    fn user_warning_buffer_records_user_messages_and_drains() {
+        let _guard = verbose_test_lock().lock().unwrap();
+        drain_user_warnings();
+
+        record_user_warning(&PortError::CommandMissing("lsof".into()));
+        record_user_warning(&PortError::PermissionDenied("ps".into()));
+
+        let drained = drain_user_warnings();
+        assert_eq!(drained.len(), 2);
+        assert_eq!(
+            drained[0].user_message(),
+            "lsof not found; results may be incomplete"
+        );
+        assert_eq!(
+            drained[1].user_message(),
+            "permission denied while inspecting processes"
+        );
+        assert!(drain_user_warnings().is_empty());
     }
 }

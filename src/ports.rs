@@ -204,23 +204,23 @@ where
             info.process_name = "docker".to_string();
         }
 
-        if let Some(cwd) = cwd {
-            if docker.is_none() {
-                let project_root = root_cache
-                    .entry(cwd.clone())
-                    .or_insert_with(|| find_root(cwd))
+        if let Some(cwd) = cwd
+            && docker.is_none()
+        {
+            let project_root = root_cache
+                .entry(cwd.clone())
+                .or_insert_with(|| find_root(cwd))
+                .clone();
+            info.cwd = Some(project_root.clone());
+            info.project_name = path_basename(&project_root);
+            if info.framework.is_none() {
+                info.framework = framework_cache
+                    .entry(project_root.clone())
+                    .or_insert_with(|| detect_framework_fn(&project_root))
                     .clone();
-                info.cwd = Some(project_root.clone());
-                info.project_name = path_basename(&project_root);
-                if info.framework.is_none() {
-                    info.framework = framework_cache
-                        .entry(project_root.clone())
-                        .or_insert_with(|| detect_framework_fn(&project_root))
-                        .clone();
-                }
-                if detailed {
-                    info.git_branch = git_branch(&project_root);
-                }
+            }
+            if detailed {
+                info.git_branch = git_branch(&project_root);
             }
         }
 
@@ -603,6 +603,61 @@ mod tests {
     }
 
     #[test]
+    fn listening_ports_helper_returns_ports_directly() {
+        let fake = FakePlatformScanner {
+            listening_ports: vec![RawPortEntry {
+                port: 3000,
+                pid: 42,
+                process_name: "node".to_string(),
+            }],
+            process_details: HashMap::from([(
+                42,
+                RawProcessDetails {
+                    pid: 42,
+                    ppid: Some(1),
+                    stat: "S".to_string(),
+                    rss_kb: 1024,
+                    lstart: None,
+                    command: "node server.js".to_string(),
+                },
+            )]),
+            ..Default::default()
+        };
+
+        let result = get_listening_ports_with(&fake, false, None);
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].port, 3000);
+    }
+
+    #[test]
+    fn port_detail_helper_returns_optional_info_directly() {
+        let fake = FakePlatformScanner {
+            listening_ports: vec![RawPortEntry {
+                port: 3000,
+                pid: 42,
+                process_name: "node".to_string(),
+            }],
+            process_details: HashMap::from([(
+                42,
+                RawProcessDetails {
+                    pid: 42,
+                    ppid: Some(1),
+                    stat: "S".to_string(),
+                    rss_kb: 1024,
+                    lstart: None,
+                    command: "node server.js".to_string(),
+                },
+            )]),
+            ..Default::default()
+        };
+
+        let result = get_port_details_with(&fake, 3000, None);
+
+        assert_eq!(result.as_ref().map(|info| info.port), Some(3000));
+    }
+
+    #[test]
     fn port_info_start_time_is_stored_as_datetime_equivalent() {
         let mut fake = FakePlatformScanner {
             listening_ports: vec![RawPortEntry {
@@ -734,7 +789,7 @@ mod tests {
             fake.listening_ports.clone(),
             false,
             None,
-            || HashMap::new(),
+            HashMap::new,
             |cwd| {
                 root_calls.fetch_add(1, Ordering::SeqCst);
                 find_project_root(cwd)
