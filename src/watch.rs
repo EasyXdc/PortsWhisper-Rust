@@ -570,6 +570,7 @@ mod tests {
 
     #[test]
     fn watch_loop_does_not_refresh_again_after_interruptible_sleep_sets_stop_flag() {
+        let _guard = verbose_test_lock().lock().unwrap();
         reset_stop_requested();
         let refreshes = AtomicUsize::new(0);
 
@@ -594,6 +595,7 @@ mod tests {
 
     #[test]
     fn sleep_interruptibly_returns_early_when_stop_is_requested() {
+        let _guard = verbose_test_lock().lock().unwrap();
         reset_stop_requested();
         let started = Arc::new(AtomicBool::new(false));
         let started_for_thread = Arc::clone(&started);
