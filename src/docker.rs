@@ -2,13 +2,15 @@ use crate::framework::detect_framework_from_image;
 use crate::model::DockerInfo;
 use crate::util::run_output;
 use std::collections::{HashMap, HashSet};
+use std::time::Duration;
 
 pub fn batch_docker_info() -> HashMap<u16, DockerInfo> {
     let raw = run_output(
         "docker",
         ["ps", "--format", "{{.Ports}}\t{{.Names}}\t{{.Image}}"],
-        Some(5000),
+        Some(Duration::from_millis(5000)),
     )
+    .ok()
     .unwrap_or_default();
     let mut map = HashMap::new();
     for line in raw.lines() {
@@ -38,12 +40,11 @@ fn parse_docker_host_ports(s: &str) -> Vec<u16> {
     for chunk in s.split(',') {
         if let Some(arrow) = chunk.find("->") {
             let before = &chunk[..arrow];
-            if let Some(idx) = before.rfind(':') {
-                if let Ok(port) = before[idx + 1..].parse::<u16>() {
-                    if seen.insert(port) {
-                        ports.push(port);
-                    }
-                }
+            if let Some(idx) = before.rfind(':')
+                && let Ok(port) = before[idx + 1..].parse::<u16>()
+                && seen.insert(port)
+            {
+                ports.push(port);
             }
         }
     }

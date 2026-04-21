@@ -1,9 +1,9 @@
 use super::{
-    darwin_batch_cwd, darwin_listening_port_raw, darwin_listening_ports_raw, unix_all_processes_raw,
+    PlatformScanner, unix_batch_process_info, unix_pid_exists, unix_process_details,
+    unix_process_tree,
 };
 use super::{
-    unix_batch_process_info, unix_pid_exists, unix_process_details, unix_process_tree,
-    PlatformScanner,
+    darwin_batch_cwd, darwin_listening_port_raw, darwin_listening_ports_raw, unix_all_processes_raw,
 };
 use crate::kill;
 use crate::logs;

@@ -1,26 +1,200 @@
 use std::ffi::OsStr;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use unicode_width::UnicodeWidthChar;
+use wait_timeout::ChildExt;
 
-pub fn run_output<S, I, A>(program: S, args: I, timeout_hint: Option<u64>) -> Option<String>
+use crate::error::{PortError, record_user_warning, verbose_log_port_error};
+
+pub fn run_output<S, I, A>(
+    program: S,
+    args: I,
+    timeout: Option<Duration>,
+) -> Result<String, PortError>
 where
     S: AsRef<OsStr>,
     I: IntoIterator<Item = A>,
     A: AsRef<OsStr>,
 {
-    let _ = timeout_hint;
-    let out = Command::new(program)
-        .args(args)
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
-    if !out.status.success() && out.stdout.is_empty() {
-        return None;
+    run_output_with_user_warnings(program, args, timeout, true)
+}
+
+#[cfg(unix)]
+pub fn run_output_with_c_locale<S, I, A>(
+    program: S,
+    args: I,
+    timeout: Option<Duration>,
+) -> Result<String, PortError>
+where
+    S: AsRef<OsStr>,
+    I: IntoIterator<Item = A>,
+    A: AsRef<OsStr>,
+{
+    run_output_with_env(
+        program,
+        args,
+        timeout,
+        true,
+        [("LANG", "C"), ("LC_ALL", "C")],
+    )
+}
+
+fn run_output_silent_probe<S, I, A>(
+    program: S,
+    args: I,
+    timeout: Option<Duration>,
+) -> Result<String, PortError>
+where
+    S: AsRef<OsStr>,
+    I: IntoIterator<Item = A>,
+    A: AsRef<OsStr>,
+{
+    run_output_with_user_warnings(program, args, timeout, false)
+}
+
+fn run_output_with_env<S, I, A, K, V, E>(
+    program: S,
+    args: I,
+    timeout: Option<Duration>,
+    record_warning: bool,
+    envs: E,
+) -> Result<String, PortError>
+where
+    S: AsRef<OsStr>,
+    I: IntoIterator<Item = A>,
+    A: AsRef<OsStr>,
+    K: AsRef<OsStr>,
+    V: AsRef<OsStr>,
+    E: IntoIterator<Item = (K, V)>,
+{
+    let program = program.as_ref().to_os_string();
+    let args: Vec<std::ffi::OsString> = args
+        .into_iter()
+        .map(|a| a.as_ref().to_os_string())
+        .collect();
+    let envs: Vec<(std::ffi::OsString, std::ffi::OsString)> = envs
+        .into_iter()
+        .map(|(key, value)| (key.as_ref().to_os_string(), value.as_ref().to_os_string()))
+        .collect();
+    let result = run_output_impl(program, args, timeout, &envs);
+    if let Err(ref e) = result {
+        verbose_log_port_error(e);
+        if record_warning {
+            record_user_warning(e);
+        }
     }
-    Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    result
+}
+
+fn run_output_with_user_warnings<S, I, A>(
+    program: S,
+    args: I,
+    timeout: Option<Duration>,
+    record_warning: bool,
+) -> Result<String, PortError>
+where
+    S: AsRef<OsStr>,
+    I: IntoIterator<Item = A>,
+    A: AsRef<OsStr>,
+{
+    run_output_with_env(
+        program,
+        args,
+        timeout,
+        record_warning,
+        std::iter::empty::<(&str, &str)>(),
+    )
+}
+
+fn run_output_impl(
+    program: std::ffi::OsString,
+    args: Vec<std::ffi::OsString>,
+    timeout: Option<Duration>,
+    envs: &[(std::ffi::OsString, std::ffi::OsString)],
+) -> Result<String, PortError> {
+    let cmd_str = format_cmd(&program, &args);
+    let program_name = program.to_string_lossy().to_string();
+
+    let mut command = Command::new(&program);
+    command
+        .args(&args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    for (key, value) in envs {
+        command.env(key, value);
+    }
+
+    let mut child = command
+        .spawn()
+        .map_err(|e| classify_spawn_error(e, &program_name))?;
+
+    let stdout_handle = child.stdout.take();
+    let stderr_handle = child.stderr.take();
+
+    let stdout_reader = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(mut s) = stdout_handle {
+            let _ = s.read_to_end(&mut buf);
+        }
+        buf
+    });
+    let stderr_reader = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(mut s) = stderr_handle {
+            let _ = s.read_to_end(&mut buf);
+        }
+        buf
+    });
+
+    let status = match timeout {
+        Some(d) => match child.wait_timeout(d).map_err(PortError::Io)? {
+            Some(s) => s,
+            None => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(PortError::Timeout {
+                    cmd: cmd_str,
+                    ms: d.as_millis() as u64,
+                });
+            }
+        },
+        None => child.wait().map_err(PortError::Io)?,
+    };
+
+    let stdout = stdout_reader.join().unwrap_or_default();
+    let stderr = stderr_reader.join().unwrap_or_default();
+    let stdout_str = String::from_utf8_lossy(&stdout).trim().to_string();
+    let stderr_str = String::from_utf8_lossy(&stderr).trim().to_string();
+
+    if status.success() || !stdout_str.is_empty() {
+        Ok(stdout_str)
+    } else {
+        Err(PortError::ExecFailed {
+            cmd: cmd_str,
+            exit: status.code().unwrap_or(-1),
+            stderr: stderr_str,
+        })
+    }
+}
+
+fn classify_spawn_error(e: std::io::Error, program: &str) -> PortError {
+    match e.kind() {
+        std::io::ErrorKind::NotFound => PortError::CommandMissing(program.to_string()),
+        std::io::ErrorKind::PermissionDenied => PortError::PermissionDenied(program.to_string()),
+        _ => PortError::Io(e),
+    }
+}
+
+fn format_cmd(program: &OsStr, args: &[std::ffi::OsString]) -> String {
+    let mut s = program.to_string_lossy().to_string();
+    for arg in args {
+        s.push(' ');
+        s.push_str(&arg.to_string_lossy());
+    }
+    s
 }
 
 pub fn command_exists(cmd: &str) -> bool {
@@ -31,7 +205,7 @@ pub fn command_exists(cmd: &str) -> bool {
         .stderr(Stdio::null())
         .status()
         .is_ok()
-        || run_output("which", [cmd], None).is_some()
+        || run_output_silent_probe("which", [cmd], None).is_ok()
 }
 
 pub fn format_memory(rss_kb: u64) -> String {
@@ -189,6 +363,8 @@ pub fn prompt_line(prompt: &str) -> Option<String> {
 mod tests {
     use super::*;
     use std::fs;
+    #[cfg(unix)]
+    use std::time::{Duration, Instant};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
@@ -227,6 +403,171 @@ mod tests {
     fn truncation_uses_visible_width_for_wide_unicode() {
         assert_eq!(truncate_visible("表表表A", 5), "表表…");
         assert_eq!(truncate_visible("表A", 3), "表A");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_ps_commands_are_wrapped_with_lang_c() {
+        let out =
+            run_output_with_c_locale("sh", ["-c", "printf '%s/%s' \"$LANG\" \"$LC_ALL\""], None)
+                .expect("should succeed");
+
+        assert_eq!(out, "C/C");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_output_returns_ok_for_successful_command() {
+        let out = run_output("echo", ["hello"], None).expect("should succeed");
+        assert_eq!(out, "hello");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_output_reports_command_missing_for_nonexistent_binary() {
+        use crate::error::{drain_user_warnings, verbose_test_lock};
+        let _guard = verbose_test_lock().lock().unwrap();
+        drain_user_warnings();
+        let err = run_output("definitely-not-a-real-command-xyz", ["arg"], None)
+            .expect_err("should fail");
+        assert!(matches!(err, PortError::CommandMissing(_)));
+        drain_user_warnings();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_output_err_writes_to_verbose_log_when_enabled() {
+        use crate::error::{drain_verbose_log, set_verbose_enabled, verbose_test_lock};
+        let _guard = verbose_test_lock().lock().unwrap();
+        set_verbose_enabled(true);
+        drain_verbose_log();
+
+        let _ = run_output("definitely-not-a-real-command-xyz-2", ["arg"], None);
+        let drained = drain_verbose_log();
+        set_verbose_enabled(false);
+
+        assert!(
+            drained
+                .iter()
+                .any(|m| m.contains("not found")
+                    && m.contains("definitely-not-a-real-command-xyz-2")),
+            "verbose log should capture full PortError message, got {drained:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_output_err_does_not_accumulate_when_verbose_disabled() {
+        use crate::error::{drain_verbose_log, set_verbose_enabled, verbose_test_lock};
+        let _guard = verbose_test_lock().lock().unwrap();
+        set_verbose_enabled(false);
+        drain_verbose_log();
+
+        let _ = run_output("definitely-not-a-real-command-xyz-3", ["arg"], None);
+        assert!(drain_verbose_log().is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_output_err_records_user_warning_even_when_verbose_disabled() {
+        use crate::error::{drain_user_warnings, set_verbose_enabled, verbose_test_lock};
+        let _guard = verbose_test_lock().lock().unwrap();
+        set_verbose_enabled(false);
+        drain_user_warnings();
+
+        let _ = run_output("definitely-not-a-real-command-xyz-4", ["arg"], None);
+        let drained = drain_user_warnings();
+
+        assert_eq!(drained.len(), 1);
+        assert_eq!(
+            drained[0].user_message(),
+            "definitely-not-a-real-command-xyz-4 not found; results may be incomplete"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn command_exists_probe_does_not_record_user_warning() {
+        use crate::error::{drain_user_warnings, set_verbose_enabled, verbose_test_lock};
+        let _guard = verbose_test_lock().lock().unwrap();
+        set_verbose_enabled(false);
+        drain_user_warnings();
+
+        assert!(!command_exists("definitely-not-a-real-command-xyz-5"));
+        assert!(drain_user_warnings().is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_output_times_out_for_long_running_child() {
+        use crate::error::{drain_user_warnings, verbose_test_lock};
+        let _guard = verbose_test_lock().lock().unwrap();
+        drain_user_warnings();
+
+        let result = run_output("sleep", ["10"], Some(Duration::from_millis(200)));
+        assert!(
+            matches!(result, Err(PortError::Timeout { .. })),
+            "expected Timeout, got {:?}",
+            result
+        );
+        drain_user_warnings();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_output_timeout_reports_command_text_and_requested_ms() {
+        use crate::error::{drain_user_warnings, verbose_test_lock};
+        let _guard = verbose_test_lock().lock().unwrap();
+        drain_user_warnings();
+
+        let result = run_output("sleep", ["10"], Some(Duration::from_millis(200)))
+            .expect_err("sleep should time out");
+
+        match result {
+            PortError::Timeout { cmd, ms } => {
+                assert!(cmd.contains("sleep"), "cmd={cmd:?}");
+                assert!(cmd.contains("10"), "cmd={cmd:?}");
+                assert_eq!(ms, 200);
+            }
+            other => panic!("expected Timeout, got {other:?}"),
+        }
+        drain_user_warnings();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_output_timeout_returns_well_before_command_natural_exit() {
+        use crate::error::{drain_user_warnings, verbose_test_lock};
+        let _guard = verbose_test_lock().lock().unwrap();
+        drain_user_warnings();
+
+        let start = Instant::now();
+        let result = run_output("sleep", ["10"], Some(Duration::from_millis(200)));
+        let elapsed = start.elapsed();
+
+        assert!(matches!(result, Err(PortError::Timeout { .. })));
+        assert!(
+            elapsed < Duration::from_secs(3),
+            "timeout path should finish well before natural exit: {elapsed:?}"
+        );
+        drain_user_warnings();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_output_reports_exec_failed_on_nonzero_exit_with_no_stdout() {
+        use crate::error::{drain_user_warnings, verbose_test_lock};
+        let _guard = verbose_test_lock().lock().unwrap();
+        drain_user_warnings();
+        let err = run_output("sh", ["-c", "echo oops >&2; exit 3"], None).expect_err("should fail");
+        match err {
+            PortError::ExecFailed { exit, stderr, .. } => {
+                assert_eq!(exit, 3);
+                assert!(stderr.contains("oops"), "stderr={stderr:?}");
+            }
+            other => panic!("expected ExecFailed, got {other:?}"),
+        }
+        drain_user_warnings();
     }
 
     fn temp_dir(label: &str) -> std::path::PathBuf {

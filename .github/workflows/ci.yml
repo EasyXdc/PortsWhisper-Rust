@@ -7,9 +7,16 @@ on:
       - main
 
 jobs:
-  verify:
-    name: Verify core checks
-    runs-on: ubuntu-latest
+  rust-core:
+    name: Rust core checks (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
 
     steps:
       - name: Checkout repository
@@ -17,14 +24,30 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Check Rust formatting
+        run: cargo fmt --check
+
+      - name: Run Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Run Rust tests
+        run: cargo test
+
+  node-package:
+    name: Node package verification
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
-
-      - name: Run Rust tests
-        run: cargo test
 
       - name: Pack npm tarball
         run: npm pack

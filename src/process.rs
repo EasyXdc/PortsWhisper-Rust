@@ -98,20 +98,18 @@ where
                 status_raw: String::new(),
             };
             let should_enrich_project = info.framework.is_some() || keep_dev_process(&info);
-            if should_enrich_project {
-                if let Some(cwd) = cwd {
-                    let root = root_cache
-                        .entry(cwd.clone())
-                        .or_insert_with(|| find_root(cwd))
+            if should_enrich_project && let Some(cwd) = cwd {
+                let root = root_cache
+                    .entry(cwd.clone())
+                    .or_insert_with(|| find_root(cwd))
+                    .clone();
+                info.cwd = Some(root.clone());
+                info.project_name = path_basename(&root);
+                if info.framework.is_none() {
+                    info.framework = framework_cache
+                        .entry(root.clone())
+                        .or_insert_with(|| detect_framework_fn(&root))
                         .clone();
-                    info.cwd = Some(root.clone());
-                    info.project_name = path_basename(&root);
-                    if info.framework.is_none() {
-                        info.framework = framework_cache
-                            .entry(root.clone())
-                            .or_insert_with(|| detect_framework_fn(&root))
-                            .clone();
-                    }
                 }
             }
             info
@@ -149,15 +147,15 @@ where
     if n == 0 {
         return None;
     }
-    if n <= 65_535 {
-        if let Some(info) = port_lookup(n as u16) {
-            return Some(KillTargetResolution {
-                pid: info.pid,
-                via: KillResolutionKind::Port,
-                port: Some(n as u16),
-                info: Some(info),
-            });
-        }
+    if n <= 65_535
+        && let Some(info) = port_lookup(n as u16)
+    {
+        return Some(KillTargetResolution {
+            pid: info.pid,
+            via: KillResolutionKind::Port,
+            port: Some(n as u16),
+            info: Some(info),
+        });
     }
     if pid_exists(n) {
         return Some(KillTargetResolution {
@@ -191,8 +189,8 @@ mod tests {
     use crate::util::find_project_root;
     use std::fs;
     use std::path::PathBuf;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
