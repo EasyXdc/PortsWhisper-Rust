@@ -2,9 +2,9 @@ use crate::error::PortError;
 use crate::model::{LogFile, ProcessTreeNode, RawPortEntry, RawProcessDetails, RawProcessEntry};
 #[cfg(target_os = "linux")]
 use crate::util::command_exists;
+use crate::util::run_output;
 #[cfg(unix)]
-use crate::util::run_output_with_c_locale;
-use crate::util::{basename, run_output};
+use crate::util::{basename, run_output_with_c_locale};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Command;
@@ -482,6 +482,7 @@ fn unix_batch_process_info(pids: &[u32]) -> HashMap<u32, RawProcessDetails> {
     }
 }
 
+#[cfg(unix)]
 fn unix_batch_process_info_with<Lookup>(
     _pids: &[u32],
     result: Result<String, PortError>,
@@ -525,6 +526,7 @@ fn unix_process_details(pid: u32) -> Option<RawProcessDetails> {
     ))
 }
 
+#[cfg(unix)]
 fn unix_process_details_from_result(
     result: Result<String, PortError>,
 ) -> Option<RawProcessDetails> {
@@ -619,10 +621,9 @@ fn windows_batch_cwd(pids: &[u32]) -> HashMap<u32, PathBuf> {
                 &format!("(Get-Process -Id {pid} -ErrorAction SilentlyContinue).Path | Split-Path"),
             ],
             Some(Duration::from_millis(5000)),
-        ) {
-            if !path.trim().is_empty() {
-                map.insert(*pid, PathBuf::from(path));
-            }
+        ) && !path.trim().is_empty()
+        {
+            map.insert(*pid, PathBuf::from(path));
         }
     }
     map
@@ -679,6 +680,7 @@ fn windows_all_processes_raw() -> Vec<RawProcessEntry> {
 }
 
 #[cfg(unix)]
+#[cfg(unix)]
 fn unix_process_tree(pid: u32) -> Vec<ProcessTreeNode> {
     unix_process_tree_with(pid, |target_pid| {
         run_output_with_c_locale(
@@ -690,6 +692,7 @@ fn unix_process_tree(pid: u32) -> Vec<ProcessTreeNode> {
     })
 }
 
+#[cfg(unix)]
 fn unix_process_tree_with<Lookup>(pid: u32, lookup: Lookup) -> Vec<ProcessTreeNode>
 where
     Lookup: Fn(u32) -> Option<String>,
@@ -726,6 +729,7 @@ where
     tree
 }
 
+#[cfg(unix)]
 fn parse_unix_ps_details(line: &str) -> Option<(u32, RawProcessDetails)> {
     let parts: Vec<&str> = line.split_whitespace().collect();
     if parts.len() < 9 {
@@ -892,6 +896,7 @@ fn parse_quoted_process_name(s: &str) -> Option<String> {
     Some(s[start..start + end].to_string())
 }
 
+#[cfg(unix)]
 fn unix_pid_exists(pid: u32) -> bool {
     Command::new("kill")
         .arg("-0")
