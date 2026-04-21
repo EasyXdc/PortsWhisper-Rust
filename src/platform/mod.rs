@@ -122,6 +122,7 @@ impl PlatformScanner for UnsupportedScanner {
     }
 }
 
+#[cfg(any(test, target_os = "macos"))]
 fn darwin_listening_ports_raw() -> Vec<RawPortEntry> {
     darwin_listening_ports_from_result(run_output(
         "lsof",
@@ -130,10 +131,12 @@ fn darwin_listening_ports_raw() -> Vec<RawPortEntry> {
     ))
 }
 
+#[cfg(any(test, target_os = "macos"))]
 fn darwin_listening_ports_from_result(result: Result<String, PortError>) -> Vec<RawPortEntry> {
     darwin_listening_ports_from_output(degrade_command_output(result))
 }
 
+#[cfg(any(test, target_os = "macos"))]
 fn darwin_listening_ports_from_output(raw: String) -> Vec<RawPortEntry> {
     let mut entries = Vec::new();
     let mut seen = HashMap::new();
@@ -161,6 +164,7 @@ fn darwin_listening_ports_from_output(raw: String) -> Vec<RawPortEntry> {
     entries
 }
 
+#[cfg(target_os = "macos")]
 fn darwin_listening_port_raw(port: u16) -> Option<RawPortEntry> {
     darwin_listening_ports_from_result(run_output(
         "lsof",
@@ -447,6 +451,7 @@ fn windows_netstat_listening_ports_from_output(raw: String) -> Vec<RawPortEntry>
     entries
 }
 
+#[cfg(unix)]
 fn unix_batch_process_info(pids: &[u32]) -> HashMap<u32, RawProcessDetails> {
     if pids.is_empty() {
         return HashMap::new();
@@ -468,7 +473,7 @@ fn unix_batch_process_info(pids: &[u32]) -> HashMap<u32, RawProcessDetails> {
     );
     #[cfg(target_os = "linux")]
     {
-        return unix_batch_process_info_with(pids, result, |pid| linux_proc_details(*pid));
+        unix_batch_process_info_with(pids, result, |pid| linux_proc_details(*pid))
     }
 
     #[cfg(not(target_os = "linux"))]
@@ -506,6 +511,7 @@ where
     map
 }
 
+#[cfg(unix)]
 fn unix_process_details(pid: u32) -> Option<RawProcessDetails> {
     unix_process_details_from_result(run_output_with_c_locale(
         "ps",
@@ -547,6 +553,7 @@ fn windows_batch_process_info(pids: &[u32]) -> HashMap<u32, RawProcessDetails> {
     map
 }
 
+#[cfg(target_os = "macos")]
 fn darwin_batch_cwd(pids: &[u32]) -> HashMap<u32, PathBuf> {
     let mut map = HashMap::new();
     if pids.is_empty() {
@@ -591,10 +598,10 @@ where
     let mut map = HashMap::new();
     for pid in pids {
         let path = PathBuf::from(format!("/proc/{pid}/cwd"));
-        if let Ok(target) = read_link(&path) {
-            if target.is_absolute() {
-                map.insert(*pid, target);
-            }
+        if let Ok(target) = read_link(&path)
+            && target.is_absolute()
+        {
+            map.insert(*pid, target);
         }
     }
     map
@@ -621,6 +628,7 @@ fn windows_batch_cwd(pids: &[u32]) -> HashMap<u32, PathBuf> {
     map
 }
 
+#[cfg(unix)]
 fn unix_all_processes_raw() -> Vec<RawProcessEntry> {
     let raw = degrade_command_output(run_output_with_c_locale(
         "ps",
@@ -670,6 +678,7 @@ fn windows_all_processes_raw() -> Vec<RawProcessEntry> {
     Vec::new()
 }
 
+#[cfg(unix)]
 fn unix_process_tree(pid: u32) -> Vec<ProcessTreeNode> {
     unix_process_tree_with(pid, |target_pid| {
         run_output_with_c_locale(
@@ -760,10 +769,10 @@ where
 fn linux_proc_details(pid: u32) -> Option<RawProcessDetails> {
     linux_proc_details_with(
         pid,
-        |path| std::fs::read_to_string(path),
-        |path| std::fs::read_to_string(path),
-        |path| std::fs::read(path),
-        |path| std::fs::read_to_string(path),
+        std::fs::read_to_string,
+        std::fs::read_to_string,
+        std::fs::read,
+        std::fs::read_to_string,
     )
 }
 
@@ -899,6 +908,7 @@ fn unix_pid_exists(pid: u32) -> bool {
 mod tests {
     #[cfg(target_os = "linux")]
     use super::unix_batch_process_info_with;
+    #[cfg(any(test, target_os = "windows"))]
     use super::windows_powershell_listening_ports_from_output;
     #[cfg(target_os = "windows")]
     use super::windows_process_name_with;
@@ -910,11 +920,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     use crate::model::RawProcessDetails;
     #[cfg(target_os = "linux")]
-    use std::collections::HashMap;
-    #[cfg(target_os = "linux")]
     use std::io::{Error, ErrorKind};
-    #[cfg(target_os = "linux")]
-    use std::path::PathBuf;
 
     #[test]
     fn listening_port_scan_timeout_degrades_to_empty_entries() {

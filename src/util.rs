@@ -362,9 +362,10 @@ pub fn prompt_line(prompt: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::error::PortError;
     use std::fs;
-    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+    #[cfg(unix)]
+    use std::time::{Duration, Instant};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn memory_format_uses_reference_thresholds() {
