@@ -208,3 +208,5 @@
 | 2026-04-19 | Initial roadmap after v0.1.0 stable release |
 | 2026-04-19 | Reordered phases for conservative execution: extracted TUI/config to future exploration, separated CLI contract, platform parity, and terminal UX work |
 | 2026-04-19 | Pulled S2 SIGINT into Phase 1 as stability fix; added hyperfine baseline to Phase 1 scope; made Phase 2 `clap` adoption contingent on Open Question decision; promoted CI matrix to Phase 3 prerequisite; added proposed Phase-to-version mapping |
+| 2026-04-21 | Completed Phase 3 platform parity and high-frequency commands: Unix `ps` locale hardening, Windows listener migration, Linux `/proc`-first log discovery, CI matrix prerequisite, `ports check`, `ports open`, `ports logs --grep/--since`, and `ports kill --signal` |
+| 2026-04-21 | Completed Phase 4 terminal UX work: quiet/ascii global flags, header render config, width-aware layout, ASCII-safe glyph fallback, framework display metadata consolidation, non-interactive header suppression, low-contrast gray fallback, and slow-command spinner gating |

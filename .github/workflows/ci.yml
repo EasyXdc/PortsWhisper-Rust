@@ -7,11 +7,16 @@ on:
       - main
 
 jobs:
-  rust-ci:
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+  rust-core:
+    name: Rust core checks (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
 
     steps:
       - name: Checkout repository
@@ -22,16 +27,17 @@ jobs:
         with:
           components: rustfmt, clippy
 
-      - name: Check formatting
+      - name: Check Rust formatting
         run: cargo fmt --check
 
-      - name: Lint
+      - name: Run Clippy
         run: cargo clippy --all-targets -- -D warnings
 
-      - name: Run tests
+      - name: Run Rust tests
         run: cargo test
 
-  node-postinstall:
+  node-package:
+    name: Node package verification
     runs-on: ubuntu-latest
 
     steps:

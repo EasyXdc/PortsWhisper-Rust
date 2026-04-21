@@ -1,5 +1,6 @@
 .DS_Store
 .worktrees/
+docs/superpowers/
 target/
 dist/
 vendor/
@@ -7,4 +8,3 @@ vendor/
 *.tar.gz
 *.zip
 npm-debug.log*
-docs/superpowers/

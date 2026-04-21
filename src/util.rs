@@ -427,7 +427,6 @@ mod tests {
         use crate::error::{drain_user_warnings, verbose_test_lock};
         let _guard = verbose_test_lock().lock().unwrap();
         drain_user_warnings();
-
         let err = run_output("definitely-not-a-real-command-xyz", ["arg"], None)
             .expect_err("should fail");
         assert!(matches!(err, PortError::CommandMissing(_)));
@@ -559,7 +558,6 @@ mod tests {
         use crate::error::{drain_user_warnings, verbose_test_lock};
         let _guard = verbose_test_lock().lock().unwrap();
         drain_user_warnings();
-
         let err = run_output("sh", ["-c", "echo oops >&2; exit 3"], None).expect_err("should fail");
         match err {
             PortError::ExecFailed { exit, stderr, .. } => {
