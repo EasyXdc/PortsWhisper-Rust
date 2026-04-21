@@ -272,7 +272,7 @@ fn linux_listening_ports_from_procfs() -> Vec<RawPortEntry> {
     linux_listening_ports_from_proc(tcp, tcp6, &pids, linux_pid_socket_inodes)
 }
 
-#[cfg(any(test, target_os = "linux"))]
+#[cfg(target_os = "linux")]
 fn linux_listening_ports_from_proc<Lookup>(
     tcp: Option<String>,
     tcp6: Option<String>,
@@ -315,7 +315,7 @@ where
     entries
 }
 
-#[cfg(any(test, target_os = "linux"))]
+#[cfg(target_os = "linux")]
 fn parse_linux_proc_net_tcp(raw: &Option<String>) -> HashMap<u64, u16> {
     let Some(raw) = raw else {
         return HashMap::new();
@@ -922,8 +922,11 @@ mod tests {
     use super::{darwin_listening_ports_from_result, unix_process_details_from_result};
     #[cfg(target_os = "linux")]
     use super::{linux_batch_cwd_with, linux_proc_details_with};
+    #[cfg(target_os = "linux")]
+    use super::linux_listening_ports_from_proc;
     #[cfg(unix)]
-    use super::{linux_listening_ports_from_proc, unix_process_tree_with};
+    use super::unix_process_tree_with;
+    #[cfg(unix)]
     use crate::error::PortError;
     #[cfg(target_os = "linux")]
     use crate::model::RawProcessDetails;
@@ -1020,6 +1023,7 @@ mod tests {
         assert_eq!(details.ppid, None);
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn linux_proc_socket_inode_mapping_can_build_listener_entries() {
         let tcp = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n   0: 0100007F:0BB8 00000000:0000 0A 00000000:00000000 00:00000000 00000000  100        0 12345 1 0000000000000000 100 0 0 10 0\n";
