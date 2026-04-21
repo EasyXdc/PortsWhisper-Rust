@@ -913,7 +913,11 @@ fn unix_pid_exists(pid: u32) -> bool {
 #[cfg(test)]
 mod tests {
     #[cfg(target_os = "linux")]
+    use super::linux_listening_ports_from_proc;
+    #[cfg(target_os = "linux")]
     use super::unix_batch_process_info_with;
+    #[cfg(unix)]
+    use super::unix_process_tree_with;
     #[cfg(any(test, target_os = "windows"))]
     use super::windows_powershell_listening_ports_from_output;
     #[cfg(target_os = "windows")]
@@ -922,10 +926,6 @@ mod tests {
     use super::{darwin_listening_ports_from_result, unix_process_details_from_result};
     #[cfg(target_os = "linux")]
     use super::{linux_batch_cwd_with, linux_proc_details_with};
-    #[cfg(target_os = "linux")]
-    use super::linux_listening_ports_from_proc;
-    #[cfg(unix)]
-    use super::unix_process_tree_with;
     #[cfg(unix)]
     use crate::error::PortError;
     #[cfg(target_os = "linux")]
