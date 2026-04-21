@@ -132,12 +132,12 @@ fn darwin_listening_ports_raw() -> Vec<RawPortEntry> {
     ))
 }
 
-#[cfg(any(test, target_os = "macos"))]
+#[cfg(any(target_os = "macos", all(test, unix)))]
 fn darwin_listening_ports_from_result(result: Result<String, PortError>) -> Vec<RawPortEntry> {
     darwin_listening_ports_from_output(degrade_command_output(result))
 }
 
-#[cfg(any(test, target_os = "macos"))]
+#[cfg(any(target_os = "macos", all(test, unix)))]
 fn darwin_listening_ports_from_output(raw: String) -> Vec<RawPortEntry> {
     let mut entries = Vec::new();
     let mut seen = HashMap::new();
