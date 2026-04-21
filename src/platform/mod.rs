@@ -2,13 +2,13 @@ use crate::error::PortError;
 use crate::model::{LogFile, ProcessTreeNode, RawPortEntry, RawProcessDetails, RawProcessEntry};
 #[cfg(target_os = "linux")]
 use crate::util::command_exists;
-#[cfg(unix)]
-use std::process::Command;
 use crate::util::run_output;
 #[cfg(unix)]
 use crate::util::{basename, run_output_with_c_locale};
 use std::collections::HashMap;
 use std::path::PathBuf;
+#[cfg(unix)]
+use std::process::Command;
 use std::time::Duration;
 
 #[cfg(target_os = "linux")]
@@ -912,18 +912,18 @@ fn unix_pid_exists(pid: u32) -> bool {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(unix)]
-    use super::{darwin_listening_ports_from_result, unix_process_details_from_result};
-    #[cfg(unix)]
-    use super::{linux_listening_ports_from_proc, unix_process_tree_with};
     #[cfg(target_os = "linux")]
     use super::unix_batch_process_info_with;
     #[cfg(any(test, target_os = "windows"))]
     use super::windows_powershell_listening_ports_from_output;
     #[cfg(target_os = "windows")]
     use super::windows_process_name_with;
+    #[cfg(unix)]
+    use super::{darwin_listening_ports_from_result, unix_process_details_from_result};
     #[cfg(target_os = "linux")]
     use super::{linux_batch_cwd_with, linux_proc_details_with};
+    #[cfg(unix)]
+    use super::{linux_listening_ports_from_proc, unix_process_tree_with};
     use crate::error::PortError;
     #[cfg(target_os = "linux")]
     use crate::model::RawProcessDetails;
