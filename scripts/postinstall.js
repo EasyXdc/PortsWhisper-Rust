@@ -12,10 +12,21 @@ const {
 
 const PACKAGE_ROOT = path.resolve(__dirname, "..");
 const VENDOR_DIR = path.join(PACKAGE_ROOT, "vendor");
-const DEFAULT_TAG = process.env.PORTS_RS_RELEASE_TAG || "v0.1.0";
-const DEFAULT_BASE_URL =
-  process.env.PORTS_RS_BASE_URL ||
-  `https://github.com/EasyXdc/PortsWhisper-Rust/releases/download/${DEFAULT_TAG}`;
+
+function packageVersion() {
+  return require(path.join(PACKAGE_ROOT, "package.json")).version;
+}
+
+function defaultReleaseTag() {
+  return process.env.PORTS_RS_RELEASE_TAG || `v${packageVersion()}`;
+}
+
+function defaultBaseUrl() {
+  return (
+    process.env.PORTS_RS_BASE_URL ||
+    `https://github.com/EasyXdc/PortsWhisper-Rust/releases/download/${defaultReleaseTag()}`
+  );
+}
 
 function binaryNames() {
   return expectedBinaryNames(process.platform);
@@ -111,7 +122,7 @@ async function main() {
 
   ensureDir(VENDOR_DIR);
   const archivePath = path.join(os.tmpdir(), target.archive);
-  const assetUrl = `${DEFAULT_BASE_URL}/${target.archive}`;
+  const assetUrl = `${defaultBaseUrl()}/${target.archive}`;
 
   try {
     await download(assetUrl, archivePath);
@@ -136,4 +147,12 @@ async function main() {
   console.log(`ports-rs postinstall: installed ${target.archive}`);
 }
 
-main().catch((error) => fail(error.message));
+if (require.main === module) {
+  main().catch((error) => fail(error.message));
+}
+
+module.exports = {
+  defaultBaseUrl,
+  defaultReleaseTag,
+  packageVersion,
+};
