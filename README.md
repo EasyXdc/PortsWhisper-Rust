@@ -27,6 +27,15 @@ Port Whisperer helps you answer questions like:
 - Which project folder and framework does it belong to?
 - Can I inspect logs or kill it right away?
 
+Typical workflows look like this:
+
+- `ports` when your dev environment feels "busy" and you want a quick overview
+- `ports 3000` when a frontend or backend refuses to start and you need the owner immediately
+- `ports check 3000 5173 8080` before starting multiple local services
+- `ports logs 3000 --grep error` when you want signal from noisy logs
+- `ports open 3000` when you know the service is up and just want the browser tab now
+- `ports kill --signal SIGINT 3000` when you want a graceful stop instead of a force kill
+
 It provides two commands:
 
 - `ports`
@@ -53,9 +62,11 @@ If you want to test a future prerelease build later, use the `next` dist-tag exp
 
 ### Cargo
 
-If you already use Rust:
+If you already use Rust and want to install from source:
 
 ```bash
+git clone https://github.com/LarsenCundric/port-whisperer-rust.git
+cd port-whisperer-rust
 cargo install --path .
 ```
 
@@ -127,6 +138,29 @@ Kill process on :3000? [y/N]
 
 Only `y` or `Y` confirms the kill.
 
+### Check whether a port is free before you start something
+
+```bash
+ports check 3000
+ports check 3000 5173 8080
+ports --json check 3000 5173 8080
+```
+
+This is useful before starting a frontend, backend, proxy, or local database.
+
+Exit codes:
+
+- `0` when all requested ports are available
+- `1` when any requested port is already occupied
+
+### Open a local service in the browser
+
+```bash
+ports open 3000
+```
+
+This opens `http://localhost:3000` in your default browser.
+
 ## 🧰 Commands
 
 ### Process list
@@ -156,6 +190,7 @@ ports kill 3000 5173 8080
 ports kill 3000-3010
 ports kill 42872
 ports kill --force 3000
+ports kill --signal SIGINT 3000
 ```
 
 Rules:
@@ -165,6 +200,8 @@ Rules:
 - values above `65535` are treated as PID only
 - ranges expand into multiple ports
 - empty ports inside a range are summarized, not treated as hard errors
+- `--signal <name>` lets you request a specific signal such as `SIGINT`, `SIGTERM`, or `SIGKILL`
+- `--force` still means `SIGKILL`
 
 ### Logs
 
@@ -175,6 +212,9 @@ ports logs 3000 --follow
 ports logs 3000 --lines 10
 ports logs 3000 --lines=10
 ports logs 3000 --err
+ports logs 3000 --grep error
+ports logs 3000 --since 10m
+ports logs 3000 -f --grep error
 ```
 
 Port Whisperer tries to discover:
@@ -182,6 +222,12 @@ Port Whisperer tries to discover:
 - redirected stdout/stderr files
 - `.log` / `logs/` / `nohup.out` style paths
 - system log fallbacks on macOS, Linux, and Windows
+
+Use cases:
+
+- `--grep <pattern>` keeps only matching lines
+- `--since <value>` narrows system-log fallback queries such as `journalctl` or macOS unified logs
+- `--err` prefers stderr when it is redirected separately
 
 ### Clean orphaned or zombie processes
 
@@ -197,6 +243,25 @@ ports watch
 
 Press `Ctrl+C` to stop.
 
+## 🧭 Global Options
+
+These flags work across the CLI where supported:
+
+- `--json`: emit structured JSON for scriptable commands such as `ports`, `ports ps`, `ports 3000`, and `ports check`
+- `--quiet`: reduce decorative output for cleaner terminal or redirected use
+- `--ascii`: force ASCII-safe symbols for limited terminals
+- `--all` / `-a`: show all listeners or processes instead of the development-focused filtered view
+
+Examples:
+
+```bash
+ports --json
+ports ps --json --all
+ports --quiet
+ports --ascii
+TERM=dumb ports
+```
+
 ## 🧱 Tech Stack
 
 | Layer | Tech |
@@ -205,20 +270,25 @@ Press `Ctrl+C` to stop.
 | Packaging | npm + Node.js install scripts |
 | macOS process discovery | `lsof` + `ps` + `log` |
 | Linux process discovery | `/proc` + `ss` / `netstat` + `ps` + `journalctl` |
-| Windows process discovery | `netstat` + `wmic` / PowerShell + `taskkill` |
+| Windows process discovery | PowerShell + `Get-NetTCPConnection` / `Get-Process` + `taskkill` |
 
 ## 📊 Performance
 
-Fresh local measurements:
+Fresh release-mode local measurements (`hyperfine --warmup 3`):
 
-| Command | Node avg | Rust avg |
-| --- | ---: | ---: |
-| `ports` | `0.46s` | `0.19s` |
-| `ports --all` | `0.45s` | `0.18s` |
-| `ports ps` | `0.15s` | `0.10s` |
-| `ports <port>` | `7.20s` | `0.09s` |
+| Command | Mean |
+| --- | ---: |
+| `./target/release/ports` | `99.8 ms` |
+| `./target/release/ports ps` | `96.2 ms` |
+| `./target/release/ports 3000` | `43.9 ms` |
 
-These figures come from fresh local runs on the current development machine. Exact timings will vary by OS, hardware, background processes, and Docker state.
+Compared with the Phase 1 baseline on the same development machine:
+
+- `ports` improved from `116.1 ms` to `99.8 ms`
+- `ports ps` stayed effectively flat (`96.8 ms` -> `96.2 ms`)
+- `ports 3000` improved from `54.4 ms` to `43.9 ms`
+
+These figures are local samples, not a universal guarantee. Real timings vary by OS, hardware, Docker state, and background load.
 
 ## 🖥️ Platform Support
 
@@ -257,6 +327,20 @@ You can:
 ```bash
 cargo install --path .
 ```
+
+### Why didn't `ports logs` show the same output I see in another terminal?
+
+If a process is only writing to a live terminal session and not to a redirected file or system log, Port Whisperer may not be able to recover that output afterward. In that case:
+
+- rerun the process with stdout/stderr redirected to a file
+- or use a framework/service logger that writes to discoverable logs
+
+### When should I use `ports check` instead of `ports 3000`?
+
+Use:
+
+- `ports 3000` when you want details about the owner of a port
+- `ports check 3000` when you only care whether the port is free before starting something
 
 ### Why are some fields empty?
 
