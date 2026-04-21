@@ -164,8 +164,10 @@ fn adjusted_code(code: &str) -> &str {
 }
 
 fn prefers_low_contrast_safe_text() -> bool {
-    matches!(std::env::var("TERM").ok().as_deref(), Some("vt100" | "vt220" | "ansi"))
-        && std::env::var_os("COLORTERM").is_none()
+    matches!(
+        std::env::var("TERM").ok().as_deref(),
+        Some("vt100" | "vt220" | "ansi")
+    ) && std::env::var_os("COLORTERM").is_none()
 }
 
 pub fn bold(s: impl AsRef<str>) -> String {
@@ -301,7 +303,10 @@ mod tests {
             std::env::remove_var("NO_COLOR");
         };
 
-        assert_eq!(gray("plain"), format!("{}plain{}", super::WHITE, super::RESET));
+        assert_eq!(
+            gray("plain"),
+            format!("{}plain{}", super::WHITE, super::RESET)
+        );
 
         restore_env("TERM", previous_term);
         restore_env("COLORTERM", previous_colorterm);
@@ -312,15 +317,30 @@ mod tests {
     fn framework_styles_use_display_metadata() {
         assert_eq!(
             super::framework("Next.js"),
-            format!("{}{}{}", framework::display_metadata("Next.js").ansi_prefix, "Next.js", super::RESET)
+            format!(
+                "{}{}{}",
+                framework::display_metadata("Next.js").ansi_prefix,
+                "Next.js",
+                super::RESET
+            )
         );
         assert_eq!(
             super::framework("SvelteKit"),
-            format!("{}{}{}", framework::display_metadata("SvelteKit").ansi_prefix, "SvelteKit", super::RESET)
+            format!(
+                "{}{}{}",
+                framework::display_metadata("SvelteKit").ansi_prefix,
+                "SvelteKit",
+                super::RESET
+            )
         );
         assert_eq!(
             super::framework("Unknown"),
-            format!("{}{}{}", framework::display_metadata("Unknown").ansi_prefix, "Unknown", super::RESET)
+            format!(
+                "{}{}{}",
+                framework::display_metadata("Unknown").ansi_prefix,
+                "Unknown",
+                super::RESET
+            )
         );
     }
 

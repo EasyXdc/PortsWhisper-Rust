@@ -129,14 +129,24 @@ pub fn command(binary_name: &str) -> Command {
         .subcommand(Command::new("clean"))
         .subcommand(
             Command::new("kill")
-                .arg(Arg::new("force").short('f').long("force").action(ArgAction::SetTrue))
+                .arg(
+                    Arg::new("force")
+                        .short('f')
+                        .long("force")
+                        .action(ArgAction::SetTrue),
+                )
                 .arg(Arg::new("signal").long("signal").num_args(1))
                 .arg(Arg::new("target").num_args(0..).allow_hyphen_values(true)),
         )
         .subcommand(
             Command::new("logs")
                 .arg(Arg::new("target"))
-                .arg(Arg::new("follow").short('f').long("follow").action(ArgAction::SetTrue))
+                .arg(
+                    Arg::new("follow")
+                        .short('f')
+                        .long("follow")
+                        .action(ArgAction::SetTrue),
+                )
                 .arg(Arg::new("lines").long("lines").num_args(1))
                 .arg(Arg::new("grep").long("grep").num_args(1))
                 .arg(Arg::new("since").long("since").num_args(1))
@@ -163,7 +173,10 @@ fn query_filter_args() -> Vec<Arg> {
     ]
 }
 
-fn parse_completion_shell(binary_name: &str, args: &[String]) -> Result<Option<Shell>, clap::Error> {
+fn parse_completion_shell(
+    binary_name: &str,
+    args: &[String],
+) -> Result<Option<Shell>, clap::Error> {
     if args.first().map(String::as_str) != Some("completion") {
         return Ok(None);
     }
@@ -183,8 +196,9 @@ fn parse_completion_shell(binary_name: &str, args: &[String]) -> Result<Option<S
 
 fn parse_strict_clap_contract(binary_name: &str, args: &[String]) -> Result<(), clap::Error> {
     if should_validate_with_clap(args) {
-        command(binary_name)
-            .try_get_matches_from(std::iter::once(binary_name.to_string()).chain(args.iter().cloned()))?;
+        command(binary_name).try_get_matches_from(
+            std::iter::once(binary_name.to_string()).chain(args.iter().cloned()),
+        )?;
     }
     Ok(())
 }
@@ -192,11 +206,10 @@ fn parse_strict_clap_contract(binary_name: &str, args: &[String]) -> Result<(), 
 fn should_validate_with_clap(args: &[String]) -> bool {
     match args.first().map(String::as_str) {
         Some("help" | "clean" | "watch" | "completion" | "check" | "open") => true,
-        Some("ps") => {
-            args.iter().skip(1).any(|arg| {
-                arg == "--help" || arg == "-h" || !is_query_filter_flag(arg)
-            })
-        }
+        Some("ps") => args
+            .iter()
+            .skip(1)
+            .any(|arg| arg == "--help" || arg == "-h" || !is_query_filter_flag(arg)),
         Some("kill") => args.iter().any(|arg| arg == "--help" || arg == "-h"),
         Some("logs") => true,
         _ => args.iter().any(|arg| arg == "--help" || arg == "-h"),
@@ -204,10 +217,18 @@ fn should_validate_with_clap(args: &[String]) -> bool {
 }
 
 fn is_global_flag(arg: &str) -> bool {
-    matches!(arg, "--all" | "-a" | "--quiet" | "--ascii" | "--verbose" | "--json")
+    matches!(
+        arg,
+        "--all" | "-a" | "--quiet" | "--ascii" | "--verbose" | "--json"
+    )
 }
 
-fn is_kill_display_target(args: &[String], index: usize, arg: &str, kill_targets_started: bool) -> bool {
+fn is_kill_display_target(
+    args: &[String],
+    index: usize,
+    arg: &str,
+    kill_targets_started: bool,
+) -> bool {
     matches!(arg, "--quiet" | "--ascii")
         && matches!(args.first().map(String::as_str), Some("kill"))
         && index > 0
@@ -215,7 +236,10 @@ fn is_kill_display_target(args: &[String], index: usize, arg: &str, kill_targets
 }
 
 fn is_kill_option_with_value(args: &[String], index: usize) -> bool {
-    matches!(args.get(index.wrapping_sub(1)).map(String::as_str), Some("--signal"))
+    matches!(
+        args.get(index.wrapping_sub(1)).map(String::as_str),
+        Some("--signal")
+    )
 }
 
 fn validate_query_inputs(args: &[String]) -> Result<(), clap::Error> {
@@ -243,7 +267,9 @@ fn validate_query_inputs(args: &[String]) -> Result<(), clap::Error> {
                     return Err(invalid_value_error(format!("missing value for {arg}")));
                 };
                 if arg == "--pid" && value.parse::<u32>().is_err() {
-                    return Err(invalid_value_error(format!("invalid value '{value}' for --pid")));
+                    return Err(invalid_value_error(format!(
+                        "invalid value '{value}' for --pid"
+                    )));
                 }
                 index += 2;
             }
@@ -278,9 +304,14 @@ fn validate_query_inputs(args: &[String]) -> Result<(), clap::Error> {
 fn is_query_command_context(args: &[String]) -> bool {
     match args.first().map(String::as_str) {
         None => true,
-        Some("help" | "--help" | "-h" | "clean" | "kill" | "logs" | "watch" | "completion" | "check" | "open") => false,
+        Some(
+            "help" | "--help" | "-h" | "clean" | "kill" | "logs" | "watch" | "completion" | "check"
+            | "open",
+        ) => false,
         Some("ps") => true,
-        Some(arg) => is_query_filter_flag(arg) || looks_like_port_range(arg) || arg.parse::<u32>().is_ok(),
+        Some(arg) => {
+            is_query_filter_flag(arg) || looks_like_port_range(arg) || arg.parse::<u32>().is_ok()
+        }
     }
 }
 
@@ -330,8 +361,21 @@ mod tests {
     #[test]
     fn parses_global_flags_without_consuming_command_arguments() {
         assert_eq!(
-            parse("ports", &args(&["--json", "logs", "3000", "--lines=5", "-f", "--grep", "error", "--since", "5m"]))
-                .expect("global flags should parse"),
+            parse(
+                "ports",
+                &args(&[
+                    "--json",
+                    "logs",
+                    "3000",
+                    "--lines=5",
+                    "-f",
+                    "--grep",
+                    "error",
+                    "--since",
+                    "5m"
+                ])
+            )
+            .expect("global flags should parse"),
             ParsedCliArgs {
                 binary_name: "ports".to_string(),
                 show_all: false,
@@ -340,7 +384,16 @@ mod tests {
                 verbose: false,
                 json: true,
                 completion_shell: None,
-                remaining_args: args(&["logs", "3000", "--lines=5", "-f", "--grep", "error", "--since", "5m"]),
+                remaining_args: args(&[
+                    "logs",
+                    "3000",
+                    "--lines=5",
+                    "-f",
+                    "--grep",
+                    "error",
+                    "--since",
+                    "5m"
+                ]),
             }
         );
     }
@@ -348,17 +401,20 @@ mod tests {
     #[test]
     fn preserves_query_filter_flags_and_range_arguments_in_remaining_argv() {
         assert_eq!(
-            parse("ports", &args(&[
-                "ps",
-                "--framework",
-                "nextjs",
-                "--project",
-                "demo",
-                "--pid",
-                "42",
-                "--port-range",
-                "3000-3010",
-            ]))
+            parse(
+                "ports",
+                &args(&[
+                    "ps",
+                    "--framework",
+                    "nextjs",
+                    "--project",
+                    "demo",
+                    "--pid",
+                    "42",
+                    "--port-range",
+                    "3000-3010",
+                ])
+            )
             .expect("query filter flags should remain command-specific"),
             ParsedCliArgs {
                 binary_name: "ports".to_string(),
@@ -455,7 +511,9 @@ mod tests {
     #[test]
     fn parses_completion_shell_from_shared_clap_model() {
         assert_eq!(
-            parse("ports", &args(&["completion", "bash"])).expect("completion should parse").completion_shell,
+            parse("ports", &args(&["completion", "bash"]))
+                .expect("completion should parse")
+                .completion_shell,
             Some(Shell::Bash)
         );
     }
@@ -477,27 +535,38 @@ mod tests {
             args(&["ps", "--help"]),
             args(&["completion", "--help"]),
         ] {
-            let error = parse("ports", &argv).expect_err("subcommand help should short-circuit via clap");
+            let error =
+                parse("ports", &argv).expect_err("subcommand help should short-circuit via clap");
             assert_eq!(error.kind(), clap::error::ErrorKind::DisplayHelp);
         }
     }
 
     #[test]
     fn rejects_logs_flags_without_required_values() {
-        for argv in [args(&["logs", "3000", "--grep"]), args(&["logs", "3000", "--since"])] {
-            let error = parse("ports", &argv).expect_err("missing logs option values should fail clap validation");
+        for argv in [
+            args(&["logs", "3000", "--grep"]),
+            args(&["logs", "3000", "--since"]),
+        ] {
+            let error = parse("ports", &argv)
+                .expect_err("missing logs option values should fail clap validation");
             assert_eq!(error.kind(), clap::error::ErrorKind::InvalidValue);
         }
     }
 
     #[test]
     fn preserves_active_binary_name_for_alias_help_output() {
-        let error = parse("whoisonport", &args(&["--help"]))
-            .expect_err("help should be rendered by clap");
+        let error =
+            parse("whoisonport", &args(&["--help"])).expect_err("help should be rendered by clap");
 
         let rendered = error.render().to_string();
-        assert!(rendered.contains("Usage: whoisonport"), "unexpected help: {rendered}");
-        assert!(!rendered.contains("Usage: ports"), "unexpected help: {rendered}");
+        assert!(
+            rendered.contains("Usage: whoisonport"),
+            "unexpected help: {rendered}"
+        );
+        assert!(
+            !rendered.contains("Usage: ports"),
+            "unexpected help: {rendered}"
+        );
     }
 
     #[test]
@@ -517,7 +586,8 @@ mod tests {
             args(&["help", "unexpected", "extra"]),
             args(&["ps", "unexpected"]),
         ] {
-            let error = parse("ports", &argv).expect_err("unexpected args should fail clap validation");
+            let error =
+                parse("ports", &argv).expect_err("unexpected args should fail clap validation");
             assert!(
                 matches!(
                     error.kind(),

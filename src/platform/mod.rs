@@ -832,7 +832,9 @@ fn windows_process_name(pid: u32) -> Option<String> {
             [
                 "-NoProfile",
                 "-Command",
-                &format!("(Get-Process -Id {target_pid} -ErrorAction SilentlyContinue).ProcessName"),
+                &format!(
+                    "(Get-Process -Id {target_pid} -ErrorAction SilentlyContinue).ProcessName"
+                ),
             ],
             Some(Duration::from_millis(3000)),
         )

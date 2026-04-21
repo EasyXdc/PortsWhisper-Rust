@@ -1,10 +1,10 @@
+use crate::check;
+use crate::cli_args;
 use crate::display;
 use crate::error;
 use crate::json_output;
-use crate::check;
 use crate::kill;
 use crate::logs;
-use crate::cli_args;
 use crate::open;
 use crate::ports;
 use crate::scanner;
@@ -99,7 +99,8 @@ fn dispatch(parsed: ParsedCli) -> i32 {
                     }
                 };
             }
-            let display_config = display::with_command_elapsed(&display_config, started_at.elapsed());
+            let display_config =
+                display::with_command_elapsed(&display_config, started_at.elapsed());
             display::display_port_table_with_config(&ports, !parsed.show_all, &display_config);
             print_warning_lines(&error::drain_user_warnings());
             0
@@ -184,7 +185,11 @@ fn dispatch(parsed: ParsedCli) -> i32 {
                     }
                 };
             }
-            display::display_process_table_with_config(&processes, !parsed.show_all, &display_config);
+            display::display_process_table_with_config(
+                &processes,
+                !parsed.show_all,
+                &display_config,
+            );
             print_warning_lines(&error::drain_user_warnings());
             0
         }
@@ -229,7 +234,10 @@ fn dispatch(parsed: ParsedCli) -> i32 {
                         0
                     }
                     Err(err) => {
-                        eprintln!("failed to render json for ports {}-{}: {err}", range.start, range.end);
+                        eprintln!(
+                            "failed to render json for ports {}-{}: {err}",
+                            range.start, range.end
+                        );
                         1
                     }
                 };
@@ -303,7 +311,11 @@ fn command_name(command: &CliCommand) -> &'static str {
 
 pub fn parse_args(binary_name: &str, args: &[String]) -> ParsedCli {
     let parsed_args = cli_args::parse(binary_name, args).unwrap_or_else(|err| err.exit());
-    let command = parse_command(binary_name, &parsed_args.remaining_args, parsed_args.completion_shell);
+    let command = parse_command(
+        binary_name,
+        &parsed_args.remaining_args,
+        parsed_args.completion_shell,
+    );
     ParsedCli {
         show_all: parsed_args.show_all,
         quiet: parsed_args.quiet,
@@ -314,7 +326,11 @@ pub fn parse_args(binary_name: &str, args: &[String]) -> ParsedCli {
     }
 }
 
-fn parse_command(binary_name: &str, args: &[String], completion_shell: Option<Shell>) -> CliCommand {
+fn parse_command(
+    binary_name: &str,
+    args: &[String],
+    completion_shell: Option<Shell>,
+) -> CliCommand {
     if binary_name == "whoisonport" {
         return parse_alias_command(args);
     }
@@ -347,7 +363,7 @@ fn parse_command(binary_name: &str, args: &[String], completion_shell: Option<Sh
 }
 
 fn parse_alias_command(args: &[String]) -> CliCommand {
-    match args.as_ref() {
+    match args {
         [] => CliCommand::Help,
         [single] if matches!(single.as_str(), "help" | "--help" | "-h") => CliCommand::Help,
         [single] => {
@@ -378,7 +394,9 @@ fn parse_query_filters(args: &[String]) -> QueryFilters {
                 index += 2;
             }
             "--pid" => {
-                filters.pid = args.get(index + 1).and_then(|value| value.parse::<u32>().ok());
+                filters.pid = args
+                    .get(index + 1)
+                    .and_then(|value| value.parse::<u32>().ok());
                 index += 2;
             }
             "--project" => {
@@ -386,7 +404,9 @@ fn parse_query_filters(args: &[String]) -> QueryFilters {
                 index += 2;
             }
             "--port-range" => {
-                filters.port_range = args.get(index + 1).and_then(|value| parse_port_range(value));
+                filters.port_range = args
+                    .get(index + 1)
+                    .and_then(|value| parse_port_range(value));
                 index += 2;
             }
             other => {
@@ -431,8 +451,14 @@ fn parse_port_range(value: &str) -> Option<PortRange> {
     Some(PortRange { start, end })
 }
 
-fn filter_ports(ports: Vec<crate::model::PortInfo>, filters: &QueryFilters) -> Vec<crate::model::PortInfo> {
-    ports.into_iter().filter(|port| matches_port_filters(port, filters)).collect()
+fn filter_ports(
+    ports: Vec<crate::model::PortInfo>,
+    filters: &QueryFilters,
+) -> Vec<crate::model::PortInfo> {
+    ports
+        .into_iter()
+        .filter(|port| matches_port_filters(port, filters))
+        .collect()
 }
 
 fn filter_processes(
@@ -480,7 +506,12 @@ fn matches_name_filter(value: Option<&str>, filter: Option<&str>) -> bool {
     }
 }
 
-fn run_port_detail(port: u32, filters: &QueryFilters, json: bool, display_config: &display::DisplayConfig) -> i32 {
+fn run_port_detail(
+    port: u32,
+    filters: &QueryFilters,
+    json: bool,
+    display_config: &display::DisplayConfig,
+) -> i32 {
     let info = if port <= u16::MAX as u32 {
         ports::get_port_details(port as u16)
     } else {
@@ -534,14 +565,20 @@ fn render_port_detail_json(
     info: Option<&crate::model::PortInfo>,
     filters: &QueryFilters,
 ) -> serde_json::Result<String> {
-    render_query_json(query_command_name(format!("ports {port}"), filters), json_output::detail_payload(info))
+    render_query_json(
+        query_command_name(format!("ports {port}"), filters),
+        json_output::detail_payload(info),
+    )
 }
 
 fn render_list_json(
     ports: &[crate::model::PortInfo],
     filters: &QueryFilters,
 ) -> serde_json::Result<String> {
-    render_query_json(query_command_name("ports", filters), json_output::list_payload(ports))
+    render_query_json(
+        query_command_name("ports", filters),
+        json_output::list_payload(ports),
+    )
 }
 
 fn render_ps_json(
@@ -580,7 +617,6 @@ where
         &json_output::CommandEnvelope::ok(command, data).with_warnings(warnings),
     )
 }
-
 
 fn format_warning_lines(warnings: &[error::PortError]) -> Vec<String> {
     warnings
@@ -621,9 +657,8 @@ mod tests {
         clean_confirmation_prompt, detail_kill_prompt, dispatch, format_help_json,
         format_unknown_command_json, format_verbose_entries, format_warning_lines,
         help_usage_lines, json_not_supported_message, parse_args, render_kill_feedback,
-        render_list_json,
-        render_port_detail_json, render_ps_json, run_clean_json_with, run_clean_with, supports_json,
-        unknown_command_lines,
+        render_list_json, render_port_detail_json, render_ps_json, run_clean_json_with,
+        run_clean_with, supports_json, unknown_command_lines,
     };
     use crate::cli_args;
     use crate::display::DisplayConfig;
@@ -650,20 +685,38 @@ mod tests {
                 command: CliCommand::List(QueryFilters::default())
             }
         );
-        assert_eq!(parse_args("ports", &args(&["help"])).command, CliCommand::Help);
-        assert_eq!(parse_args("ports", &args(&["--help"])).command, CliCommand::Help);
-        assert_eq!(parse_args("ports", &args(&["-h"])).command, CliCommand::Help);
+        assert_eq!(
+            parse_args("ports", &args(&["help"])).command,
+            CliCommand::Help
+        );
+        assert_eq!(
+            parse_args("ports", &args(&["--help"])).command,
+            CliCommand::Help
+        );
+        assert_eq!(
+            parse_args("ports", &args(&["-h"])).command,
+            CliCommand::Help
+        );
         assert_eq!(
             parse_args("ports", &args(&["ps"])).command,
             CliCommand::Ps(QueryFilters::default())
         );
-        assert_eq!(parse_args("ports", &args(&["clean"])).command, CliCommand::Clean);
-        assert_eq!(parse_args("ports", &args(&["watch"])).command, CliCommand::Watch);
+        assert_eq!(
+            parse_args("ports", &args(&["clean"])).command,
+            CliCommand::Clean
+        );
+        assert_eq!(
+            parse_args("ports", &args(&["watch"])).command,
+            CliCommand::Watch
+        );
         assert_eq!(
             parse_args("ports", &args(&["check", "3000", "5173"])).command,
             CliCommand::Check(vec![3000, 5173])
         );
-        assert_eq!(parse_args("ports", &args(&["open", "3000"])).command, CliCommand::Open(3000));
+        assert_eq!(
+            parse_args("ports", &args(&["open", "3000"])).command,
+            CliCommand::Open(3000)
+        );
         assert_eq!(
             parse_args("ports", &args(&["completion", "bash"])).command,
             CliCommand::Completion(Shell::Bash)
@@ -789,13 +842,19 @@ mod tests {
 
     #[test]
     fn clap_parser_filters_global_flags_and_preserves_remaining_argv() {
-        let parsed = cli_args::parse("ports", &args(&["--json", "logs", "3000", "--lines=5", "-f"]))
-            .expect("clap parser should accept current logs contract");
+        let parsed = cli_args::parse(
+            "ports",
+            &args(&["--json", "logs", "3000", "--lines=5", "-f"]),
+        )
+        .expect("clap parser should accept current logs contract");
 
         assert!(parsed.json);
         assert!(!parsed.show_all);
         assert!(!parsed.verbose);
-        assert_eq!(parsed.remaining_args, args(&["logs", "3000", "--lines=5", "-f"]));
+        assert_eq!(
+            parsed.remaining_args,
+            args(&["logs", "3000", "--lines=5", "-f"])
+        );
 
         let parsed = cli_args::parse("ports", &args(&["3000", "--all", "--verbose"]))
             .expect("clap parser should keep positional detail behavior");
@@ -815,35 +874,44 @@ mod tests {
     #[test]
     fn parses_query_filters_for_ports_and_ps_commands() {
         assert_eq!(
-            parse_args("ports", &args(&[
-                "--framework",
-                "nextjs",
-                "--project",
-                "demo",
-                "--pid",
-                "42",
-                "--port-range",
-                "3000-3010",
-            ]))
+            parse_args(
+                "ports",
+                &args(&[
+                    "--framework",
+                    "nextjs",
+                    "--project",
+                    "demo",
+                    "--pid",
+                    "42",
+                    "--port-range",
+                    "3000-3010",
+                ])
+            )
             .command,
             CliCommand::List(QueryFilters {
                 framework: Some("nextjs".to_string()),
                 pid: Some(42),
                 project: Some("demo".to_string()),
-                port_range: Some(PortRange { start: 3000, end: 3010 }),
+                port_range: Some(PortRange {
+                    start: 3000,
+                    end: 3010
+                }),
             })
         );
 
         assert_eq!(
-            parse_args("ports", &args(&[
-                "ps",
-                "--framework",
-                "nextjs",
-                "--project",
-                "demo",
-                "--pid",
-                "42",
-            ]))
+            parse_args(
+                "ports",
+                &args(&[
+                    "ps",
+                    "--framework",
+                    "nextjs",
+                    "--project",
+                    "demo",
+                    "--pid",
+                    "42",
+                ])
+            )
             .command,
             CliCommand::Ps(QueryFilters {
                 framework: Some("nextjs".to_string()),
@@ -857,8 +925,14 @@ mod tests {
     #[test]
     fn parses_positional_port_range_as_query_path() {
         assert_eq!(
-            parse_args("ports", &args(&["3000-3010"])) .command,
-            CliCommand::PortRange(PortRange { start: 3000, end: 3010 }, QueryFilters::default())
+            parse_args("ports", &args(&["3000-3010"])).command,
+            CliCommand::PortRange(
+                PortRange {
+                    start: 3000,
+                    end: 3010
+                },
+                QueryFilters::default()
+            )
         );
     }
 
@@ -883,7 +957,10 @@ mod tests {
             framework: Some("nextjs".to_string()),
             pid: Some(42),
             project: Some("demo".to_string()),
-            port_range: Some(PortRange { start: 3000, end: 3010 }),
+            port_range: Some(PortRange {
+                start: 3000,
+                end: 3010,
+            }),
         };
 
         let ports = vec![
@@ -894,7 +971,13 @@ mod tests {
             fake_port_with_filters(3003, 42, Some("other"), Some("NextJs")),
         ];
 
-        assert_eq!(super::filter_ports(ports, &filters).into_iter().map(|port| port.port).collect::<Vec<_>>(), vec![3000]);
+        assert_eq!(
+            super::filter_ports(ports, &filters)
+                .into_iter()
+                .map(|port| port.port)
+                .collect::<Vec<_>>(),
+            vec![3000]
+        );
     }
 
     #[test]
@@ -913,7 +996,13 @@ mod tests {
             fake_process(42, Some("other"), Some("Node.js")),
         ];
 
-        assert_eq!(super::filter_processes(processes, &filters).into_iter().map(|process| process.pid).collect::<Vec<_>>(), vec![42]);
+        assert_eq!(
+            super::filter_processes(processes, &filters)
+                .into_iter()
+                .map(|process| process.pid)
+                .collect::<Vec<_>>(),
+            vec![42]
+        );
     }
 
     #[test]
@@ -960,8 +1049,14 @@ mod tests {
         let failure = render_kill_feedback(42, false);
         crate::style::set_force_ascii(false);
 
-        assert!(success.contains("  v Killed PID 42"), "expected ascii success marker: {success}");
-        assert!(failure.contains("  x Failed. Try: sudo kill -9 42"), "expected ascii failure marker: {failure}");
+        assert!(
+            success.contains("  v Killed PID 42"),
+            "expected ascii success marker: {success}"
+        );
+        assert!(
+            failure.contains("  x Failed. Try: sudo kill -9 42"),
+            "expected ascii failure marker: {failure}"
+        );
     }
 
     #[test]
@@ -1072,9 +1167,8 @@ mod tests {
             ms: 10_000,
         });
 
-        let rendered =
-            render_list_json(&[fake_port(3000, 42)], &QueryFilters::default())
-                .expect("json render should succeed");
+        let rendered = render_list_json(&[fake_port(3000, 42)], &QueryFilters::default())
+            .expect("json render should succeed");
 
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&rendered).expect("json should parse"),
@@ -1113,8 +1207,8 @@ mod tests {
             ms: 10_000,
         });
 
-        let rendered = render_ps_json(&[], &QueryFilters::default())
-            .expect("json render should succeed");
+        let rendered =
+            render_ps_json(&[], &QueryFilters::default()).expect("json render should succeed");
 
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&rendered).expect("json should parse"),
@@ -1281,19 +1375,18 @@ mod tests {
 
     #[test]
     fn rejects_json_for_unsupported_commands() {
-        for command in [CliCommand::Open(3000)] {
-            assert_eq!(
-                dispatch(ParsedCli {
-                    show_all: false,
-                    quiet: false,
-                    ascii: false,
-                    verbose: false,
-                    json: true,
-                    command,
-                }),
-                1
-            );
-        }
+        let command = CliCommand::Open(3000);
+        assert_eq!(
+            dispatch(ParsedCli {
+                show_all: false,
+                quiet: false,
+                ascii: false,
+                verbose: false,
+                json: true,
+                command,
+            }),
+            1
+        );
     }
 
     #[test]
@@ -1357,7 +1450,11 @@ mod tests {
     fn help_usage_surface_includes_completion_and_query_filters() {
         let usage = help_usage_lines();
 
-        assert!(usage.iter().any(|line| line.contains("ports completion <shell>")));
+        assert!(
+            usage
+                .iter()
+                .any(|line| line.contains("ports completion <shell>"))
+        );
         assert!(usage.iter().any(|line| line.contains("--framework")));
         assert!(usage.iter().any(|line| line.contains("--pid")));
         assert!(usage.iter().any(|line| line.contains("--project")));
@@ -1510,12 +1607,12 @@ where
     println!();
     println!(
         "{}",
-            style::yellow_bold(format!(
-                "  Found {} orphaned/zombie process{}:",
-                orphaned.len(),
-                if orphaned.len() == 1 { "" } else { "es" }
-            ))
-        );
+        style::yellow_bold(format!(
+            "  Found {} orphaned/zombie process{}:",
+            orphaned.len(),
+            if orphaned.len() == 1 { "" } else { "es" }
+        ))
+    );
     for p in &orphaned {
         let glyphs = style::glyphs();
         println!(
@@ -1530,7 +1627,12 @@ where
     let answer = prompt(&clean_confirmation_prompt());
     let outcome = apply_clean_answer(&orphaned, answer.as_deref(), kill);
     if outcome.confirmed {
-        display::display_clean_results_with_config(&orphaned, &outcome.killed, &outcome.failed, display_config);
+        display::display_clean_results_with_config(
+            &orphaned,
+            &outcome.killed,
+            &outcome.failed,
+            display_config,
+        );
         return outcome.exit_code;
     }
     println!("{}", style::gray("\n  Aborted.\n"));

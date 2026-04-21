@@ -120,7 +120,9 @@ fn launcher_command_for(platform: Platform, url: &str) -> Result<LaunchCommand, 
 
 #[cfg(test)]
 mod tests {
-    use super::{LaunchCommand, LaunchError, LaunchRequest, Platform, launcher_command_for, run_open_with};
+    use super::{
+        LaunchCommand, LaunchError, LaunchRequest, Platform, launcher_command_for, run_open_with,
+    };
 
     #[test]
     fn returns_success_when_launcher_accepts_localhost_url() {
@@ -180,21 +182,28 @@ mod tests {
     #[test]
     fn rejects_unsupported_platform_for_launcher_command() {
         assert_eq!(
-            launcher_command_for(Platform::Other("haiku".to_string()), "http://localhost:3000"),
+            launcher_command_for(
+                Platform::Other("haiku".to_string()),
+                "http://localhost:3000"
+            ),
             Err(LaunchError::UnsupportedPlatform("haiku".to_string()))
         );
     }
 
     #[test]
     fn reports_when_browser_launch_is_not_supported() {
-        let exit_code = run_open_with(3000, |_| Err(LaunchError::UnsupportedPlatform("haiku".to_string())));
+        let exit_code = run_open_with(3000, |_| {
+            Err(LaunchError::UnsupportedPlatform("haiku".to_string()))
+        });
 
         assert_eq!(exit_code, 1);
     }
 
     #[test]
     fn reports_when_browser_launcher_command_is_missing() {
-        let exit_code = run_open_with(3000, |_| Err(LaunchError::CommandMissing("xdg-open".to_string())));
+        let exit_code = run_open_with(3000, |_| {
+            Err(LaunchError::CommandMissing("xdg-open".to_string()))
+        });
 
         assert_eq!(exit_code, 1);
     }

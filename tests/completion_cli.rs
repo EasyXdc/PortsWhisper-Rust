@@ -82,11 +82,23 @@ fn fish_completion_does_not_advertise_query_filters_for_unrelated_commands() {
 fn invalid_completion_shell_reports_completion_parse_error() {
     let output = run_completion("nope");
 
-    assert!(!output.status.success(), "expected failure, got: {output:?}");
+    assert!(
+        !output.status.success(),
+        "expected failure, got: {output:?}"
+    );
     let stdout = String::from_utf8(output.stdout).expect("stdout should be utf-8");
     let stderr = String::from_utf8(output.stderr).expect("stderr should be utf-8");
 
-    assert!(!stdout.contains("Unknown command: completion"), "unexpected stdout: {stdout}");
-    assert!(stderr.contains("<shell>"), "expected shell parse error, got: {stderr}");
-    assert!(stderr.contains("possible values") || stderr.contains("invalid value"), "expected clap shell validation error, got: {stderr}");
+    assert!(
+        !stdout.contains("Unknown command: completion"),
+        "unexpected stdout: {stdout}"
+    );
+    assert!(
+        stderr.contains("<shell>"),
+        "expected shell parse error, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("possible values") || stderr.contains("invalid value"),
+        "expected clap shell validation error, got: {stderr}"
+    );
 }

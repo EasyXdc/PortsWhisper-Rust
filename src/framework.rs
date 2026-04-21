@@ -17,11 +17,9 @@ pub fn display_metadata(name: &str) -> FrameworkDisplayMetadata {
         "React" | "FastAPI" | "Go" => FrameworkDisplayMetadata {
             ansi_prefix: "\x1b[36m",
         },
-        "Vue" | "Nuxt" | "Django" | "Node.js" | "MongoDB" | "nginx" => {
-            FrameworkDisplayMetadata {
-                ansi_prefix: "\x1b[32m",
-            }
-        }
+        "Vue" | "Nuxt" | "Django" | "Node.js" | "MongoDB" | "nginx" => FrameworkDisplayMetadata {
+            ansi_prefix: "\x1b[32m",
+        },
         "Angular" | "NestJS" | "Rails" | "Ruby" | "Java" | "Redis" | "MinIO" => {
             FrameworkDisplayMetadata {
                 ansi_prefix: "\x1b[31m",
@@ -39,11 +37,9 @@ pub fn display_metadata(name: &str) -> FrameworkDisplayMetadata {
         "Express" => FrameworkDisplayMetadata {
             ansi_prefix: "\x1b[90m",
         },
-        "Remix" | "Docker" | "PostgreSQL" | "MySQL" | "Webpack" => {
-            FrameworkDisplayMetadata {
-                ansi_prefix: "\x1b[34m",
-            }
-        }
+        "Remix" | "Docker" | "PostgreSQL" | "MySQL" | "Webpack" => FrameworkDisplayMetadata {
+            ansi_prefix: "\x1b[34m",
+        },
         "Astro" | "Gatsby" => FrameworkDisplayMetadata {
             ansi_prefix: "\x1b[35m",
         },

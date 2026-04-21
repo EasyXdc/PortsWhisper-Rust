@@ -20,14 +20,23 @@ fn whoisonport_help_uses_alias_entrypoint_name() {
     assert!(output.status.success(), "expected success, got: {output:?}");
     let stdout = String::from_utf8(output.stdout).expect("stdout should be utf-8");
 
-    assert!(stdout.contains("Usage: whoisonport"), "unexpected stdout: {stdout}");
-    assert!(!stdout.contains("Usage: ports"), "unexpected stdout: {stdout}");
+    assert!(
+        stdout.contains("Usage: whoisonport"),
+        "unexpected stdout: {stdout}"
+    );
+    assert!(
+        !stdout.contains("Usage: ports"),
+        "unexpected stdout: {stdout}"
+    );
     assert!(!stdout.contains("ps"), "unexpected stdout: {stdout}");
     assert!(!stdout.contains("clean"), "unexpected stdout: {stdout}");
     assert!(!stdout.contains("kill"), "unexpected stdout: {stdout}");
     assert!(!stdout.contains("logs"), "unexpected stdout: {stdout}");
     assert!(!stdout.contains("watch"), "unexpected stdout: {stdout}");
-    assert!(!stdout.contains("completion"), "unexpected stdout: {stdout}");
+    assert!(
+        !stdout.contains("completion"),
+        "unexpected stdout: {stdout}"
+    );
 }
 
 #[test]
@@ -42,13 +51,23 @@ fn whoisonport_rejects_ports_subcommands() {
     ] {
         let output = run_bin("whoisonport", &argv);
 
-        assert!(!output.status.success(), "expected failure for {:?}, got: {output:?}", argv);
+        assert!(
+            !output.status.success(),
+            "expected failure for {:?}, got: {output:?}",
+            argv
+        );
         let stdout = String::from_utf8(output.stdout).expect("stdout should be utf-8");
         let stderr = String::from_utf8(output.stderr).expect("stderr should be utf-8");
 
-        assert!(!stdout.contains("Usage: ports"), "unexpected stdout: {stdout}");
         assert!(
-            stdout.contains("Unknown command") || stderr.contains("whoisonport") || stderr.contains("port") || stderr.contains("Usage:"),
+            !stdout.contains("Usage: ports"),
+            "unexpected stdout: {stdout}"
+        );
+        assert!(
+            stdout.contains("Unknown command")
+                || stderr.contains("whoisonport")
+                || stderr.contains("port")
+                || stderr.contains("Usage:"),
             "unexpected output stdout={stdout:?} stderr={stderr:?}"
         );
     }
@@ -63,13 +82,23 @@ fn whoisonport_rejects_query_filter_flags() {
     ] {
         let output = run_bin("whoisonport", &argv);
 
-        assert!(!output.status.success(), "expected failure for {:?}, got: {output:?}", argv);
+        assert!(
+            !output.status.success(),
+            "expected failure for {:?}, got: {output:?}",
+            argv
+        );
         let stdout = String::from_utf8(output.stdout).expect("stdout should be utf-8");
         let stderr = String::from_utf8(output.stderr).expect("stderr should be utf-8");
 
-        assert!(!stdout.contains("No process found on that port"), "unexpected stdout: {stdout}");
         assert!(
-            stdout.contains("Unknown command") || stderr.contains("whoisonport") || stderr.contains("Usage:") || stderr.contains("unexpected"),
+            !stdout.contains("No process found on that port"),
+            "unexpected stdout: {stdout}"
+        );
+        assert!(
+            stdout.contains("Unknown command")
+                || stderr.contains("whoisonport")
+                || stderr.contains("Usage:")
+                || stderr.contains("unexpected"),
             "unexpected output stdout={stdout:?} stderr={stderr:?}"
         );
     }
@@ -79,14 +108,26 @@ fn whoisonport_rejects_query_filter_flags() {
 fn whoisonport_rejects_port_ranges() {
     let output = run_bin("whoisonport", &["3000-3010"]);
 
-    assert!(!output.status.success(), "expected failure, got: {output:?}");
+    assert!(
+        !output.status.success(),
+        "expected failure, got: {output:?}"
+    );
     let stdout = String::from_utf8(output.stdout).expect("stdout should be utf-8");
     let stderr = String::from_utf8(output.stderr).expect("stderr should be utf-8");
 
-    assert!(!stdout.contains("Show dev server ports"), "unexpected stdout: {stdout}");
-    assert!(!stdout.contains("No process found on that port"), "unexpected stdout: {stdout}");
     assert!(
-        stdout.contains("Unknown command") || stderr.contains("whoisonport") || stderr.contains("Usage:") || stderr.contains("unexpected"),
+        !stdout.contains("Show dev server ports"),
+        "unexpected stdout: {stdout}"
+    );
+    assert!(
+        !stdout.contains("No process found on that port"),
+        "unexpected stdout: {stdout}"
+    );
+    assert!(
+        stdout.contains("Unknown command")
+            || stderr.contains("whoisonport")
+            || stderr.contains("Usage:")
+            || stderr.contains("unexpected"),
         "unexpected output stdout={stdout:?} stderr={stderr:?}"
     );
 }
@@ -95,46 +136,76 @@ fn whoisonport_rejects_port_ranges() {
 fn clean_rejects_unexpected_extra_arguments() {
     let output = run_bin("ports", &["clean", "unexpected"]);
 
-    assert!(!output.status.success(), "expected failure, got: {output:?}");
+    assert!(
+        !output.status.success(),
+        "expected failure, got: {output:?}"
+    );
     let stdout = String::from_utf8(output.stdout).expect("stdout should be utf-8");
     let stderr = String::from_utf8(output.stderr).expect("stderr should be utf-8");
 
     assert!(!stdout.contains("Found"), "unexpected stdout: {stdout}");
-    assert!(stderr.contains("unexpected") || stderr.contains("Usage:"), "unexpected stderr: {stderr}");
+    assert!(
+        stderr.contains("unexpected") || stderr.contains("Usage:"),
+        "unexpected stderr: {stderr}"
+    );
 }
 
 #[test]
 fn watch_rejects_unexpected_extra_arguments() {
     let output = run_bin("ports", &["watch", "unexpected"]);
 
-    assert!(!output.status.success(), "expected failure, got: {output:?}");
+    assert!(
+        !output.status.success(),
+        "expected failure, got: {output:?}"
+    );
     let stdout = String::from_utf8(output.stdout).expect("stdout should be utf-8");
     let stderr = String::from_utf8(output.stderr).expect("stderr should be utf-8");
 
-    assert!(!stdout.contains("Watching for port changes"), "unexpected stdout: {stdout}");
-    assert!(stderr.contains("unexpected") || stderr.contains("Usage:"), "unexpected stderr: {stderr}");
+    assert!(
+        !stdout.contains("Watching for port changes"),
+        "unexpected stdout: {stdout}"
+    );
+    assert!(
+        stderr.contains("unexpected") || stderr.contains("Usage:"),
+        "unexpected stderr: {stderr}"
+    );
 }
 
 #[test]
 fn help_rejects_unexpected_extra_arguments() {
     let output = run_bin("ports", &["help", "unexpected"]);
 
-    assert!(!output.status.success(), "expected failure, got: {output:?}");
+    assert!(
+        !output.status.success(),
+        "expected failure, got: {output:?}"
+    );
     let stdout = String::from_utf8(output.stdout).expect("stdout should be utf-8");
     let stderr = String::from_utf8(output.stderr).expect("stderr should be utf-8");
 
-    assert!(!stdout.contains("Port Whisperer"), "unexpected stdout: {stdout}");
-    assert!(stderr.contains("unexpected") || stderr.contains("Usage:"), "unexpected stderr: {stderr}");
+    assert!(
+        !stdout.contains("Port Whisperer"),
+        "unexpected stdout: {stdout}"
+    );
+    assert!(
+        stderr.contains("unexpected") || stderr.contains("Usage:"),
+        "unexpected stderr: {stderr}"
+    );
 }
 
 #[test]
 fn ps_rejects_unexpected_extra_arguments() {
     let output = run_bin("ports", &["ps", "unexpected"]);
 
-    assert!(!output.status.success(), "expected failure, got: {output:?}");
+    assert!(
+        !output.status.success(),
+        "expected failure, got: {output:?}"
+    );
     let stdout = String::from_utf8(output.stdout).expect("stdout should be utf-8");
     let stderr = String::from_utf8(output.stderr).expect("stderr should be utf-8");
 
     assert!(!stdout.contains("PROCESS"), "unexpected stdout: {stdout}");
-    assert!(stderr.contains("unexpected") || stderr.contains("Usage:"), "unexpected stderr: {stderr}");
+    assert!(
+        stderr.contains("unexpected") || stderr.contains("Usage:"),
+        "unexpected stderr: {stderr}"
+    );
 }

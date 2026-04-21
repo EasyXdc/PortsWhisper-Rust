@@ -66,7 +66,11 @@ pub fn check_ports(ports: &[u16]) -> Vec<PortCheckResult> {
 
 fn print_check_results(results: &[PortCheckResult]) {
     for result in results {
-        let state = if result.occupied { "occupied" } else { "available" };
+        let state = if result.occupied {
+            "occupied"
+        } else {
+            "available"
+        };
         println!("{} {state}", result.port);
     }
 }
@@ -96,7 +100,10 @@ mod tests {
             self.listening_ports.clone()
         }
 
-        fn batch_process_info(&self, _pids: &[u32]) -> HashMap<u32, crate::model::RawProcessDetails> {
+        fn batch_process_info(
+            &self,
+            _pids: &[u32],
+        ) -> HashMap<u32, crate::model::RawProcessDetails> {
             HashMap::new()
         }
 

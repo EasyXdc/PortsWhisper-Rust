@@ -71,10 +71,7 @@ pub fn render_header_with_config(config: &DisplayConfig) -> String {
         )),
         style::cyan_bold(glyphs.vertical),
         style::cyan_bold(format!(" {}", glyphs.vertical)),
-        style::gray(pad_to_width(
-            "  listening to your ports...",
-            header_width
-        )),
+        style::gray(pad_to_width("  listening to your ports...", header_width)),
         style::cyan_bold(glyphs.vertical),
         spinner_line,
         style::cyan_bold(format!(
@@ -146,17 +143,26 @@ pub fn display_port_table(ports: &[PortInfo], filtered: bool) {
 }
 
 pub fn display_port_table_with_config(ports: &[PortInfo], filtered: bool, config: &DisplayConfig) {
-    print!("{}", render_header_with_config(config));
+    print!("{}", render_port_table_output(ports, filtered, config));
+}
+
+fn render_port_table_output(ports: &[PortInfo], filtered: bool, config: &DisplayConfig) -> String {
+    let mut out = render_header_with_config(config);
     if ports.is_empty() {
-        print!("{}", render_empty_port_table_message());
-        return;
+        out.push_str(&render_empty_port_table_message());
+        return out;
     }
 
-    let rows = port_table_rows(ports);
-    print_table(&PORT_HEADERS, &rows);
-    println!();
-    println!("{}", port_summary_line(ports.len(), filtered));
-    println!();
+    let rows = port_table_rows(ports, config);
+    out.push_str(&render_table(&PORT_HEADERS, &rows, config));
+
+    if config.decorative_header {
+        out.push('\n');
+        out.push_str(&port_summary_line(ports.len(), filtered));
+        out.push_str("\n\n");
+    }
+
+    out
 }
 
 fn render_empty_port_table_message() -> String {
@@ -169,7 +175,11 @@ fn render_empty_port_table_message() -> String {
     )
 }
 
-fn port_table_rows(ports: &[PortInfo]) -> Vec<Vec<String>> {
+fn port_table_rows(ports: &[PortInfo], config: &DisplayConfig) -> Vec<Vec<String>> {
+    if !config.decorative_header {
+        return port_table_rows_plain(ports);
+    }
+
     ports
         .iter()
         .map(|p| {
@@ -194,6 +204,27 @@ fn port_table_rows(ports: &[PortInfo]) -> Vec<Vec<String>> {
                     .map(style::yellow)
                     .unwrap_or_else(|| style::gray("—")),
                 format_status(&p.status),
+            ]
+        })
+        .collect()
+}
+
+fn port_table_rows_plain(ports: &[PortInfo]) -> Vec<Vec<String>> {
+    ports
+        .iter()
+        .map(|p| {
+            vec![
+                format!(":{}", p.port),
+                if p.process_name.is_empty() {
+                    p.raw_name.clone()
+                } else {
+                    p.process_name.clone()
+                },
+                p.pid.to_string(),
+                p.project_name.clone().unwrap_or_else(|| "-".to_string()),
+                p.framework.clone().unwrap_or_else(|| "-".to_string()),
+                p.uptime.clone().unwrap_or_else(|| "-".to_string()),
+                p.status.label().to_string(),
             ]
         })
         .collect()
@@ -231,34 +262,51 @@ pub fn display_process_table_with_config(
     filtered: bool,
     config: &DisplayConfig,
 ) {
-    print!("{}", render_header_with_config(config));
-    if processes.is_empty() {
-        print!("{}", render_empty_process_table_message());
-        return;
-    }
-    let rows = process_table_rows(processes);
-    print_table(&PROCESS_HEADERS, &rows);
-    println!();
-    let all_hint = if filtered {
-        format!(
-            "{}{}{}",
-            style::gray("  ·  "),
-            style::cyan("--all"),
-            style::gray(" to show everything")
-        )
-    } else {
-        String::new()
-    };
-    println!(
-        "{}{}",
-        style::gray(format!(
-            "  {} process{}",
-            processes.len(),
-            if processes.len() == 1 { "" } else { "es" }
-        )),
-        all_hint
+    print!(
+        "{}",
+        render_process_table_output(processes, filtered, config)
     );
-    println!();
+}
+
+fn render_process_table_output(
+    processes: &[ProcessInfo],
+    filtered: bool,
+    config: &DisplayConfig,
+) -> String {
+    let mut out = render_header_with_config(config);
+    if processes.is_empty() {
+        out.push_str(&render_empty_process_table_message());
+        return out;
+    }
+
+    let rows = process_table_rows(processes, config);
+    out.push_str(&render_table(&PROCESS_HEADERS, &rows, config));
+
+    if config.decorative_header {
+        out.push('\n');
+        let all_hint = if filtered {
+            format!(
+                "{}{}{}",
+                style::gray("  ·  "),
+                style::cyan("--all"),
+                style::gray(" to show everything")
+            )
+        } else {
+            String::new()
+        };
+        out.push_str(&format!(
+            "{}{}",
+            style::gray(format!(
+                "  {} process{}",
+                processes.len(),
+                if processes.len() == 1 { "" } else { "es" }
+            )),
+            all_hint
+        ));
+        out.push_str("\n\n");
+    }
+
+    out
 }
 
 fn render_empty_process_table_message() -> String {
@@ -271,7 +319,11 @@ fn render_empty_process_table_message() -> String {
     )
 }
 
-fn process_table_rows(processes: &[ProcessInfo]) -> Vec<Vec<String>> {
+fn process_table_rows(processes: &[ProcessInfo], config: &DisplayConfig) -> Vec<Vec<String>> {
+    if !config.decorative_header {
+        return process_table_rows_plain(processes);
+    }
+
     processes
         .iter()
         .map(|p| {
@@ -304,6 +356,24 @@ fn process_table_rows(processes: &[ProcessInfo]) -> Vec<Vec<String>> {
                     .map(style::yellow)
                     .unwrap_or_else(|| style::gray("—")),
                 style::gray(truncate_visible(&p.description, 30)),
+            ]
+        })
+        .collect()
+}
+
+fn process_table_rows_plain(processes: &[ProcessInfo]) -> Vec<Vec<String>> {
+    processes
+        .iter()
+        .map(|p| {
+            vec![
+                p.pid.to_string(),
+                truncate_visible(&p.process_name, 15),
+                format!("{:.1}", p.cpu),
+                p.memory.clone().unwrap_or_else(|| "-".to_string()),
+                p.project_name.clone().unwrap_or_else(|| "-".to_string()),
+                p.framework.clone().unwrap_or_else(|| "-".to_string()),
+                p.uptime.clone().unwrap_or_else(|| "-".to_string()),
+                truncate_visible(&p.description, 30),
             ]
         })
         .collect()
@@ -601,25 +671,38 @@ fn format_status(status: &ProcessStatus) -> String {
             style::green(status.label())
         ),
         ProcessStatus::Orphaned => {
-            format!("{} {}", style::yellow(glyphs.orphaned), style::yellow(status.label()))
+            format!(
+                "{} {}",
+                style::yellow(glyphs.orphaned),
+                style::yellow(status.label())
+            )
         }
-        ProcessStatus::Zombie => format!("{} {}", style::red(glyphs.zombie), style::red(status.label())),
-        ProcessStatus::Unknown => format!("{} {}", style::gray(glyphs.unknown), style::gray(status.label())),
+        ProcessStatus::Zombie => format!(
+            "{} {}",
+            style::red(glyphs.zombie),
+            style::red(status.label())
+        ),
+        ProcessStatus::Unknown => format!(
+            "{} {}",
+            style::gray(glyphs.unknown),
+            style::gray(status.label())
+        ),
     }
 }
 
-fn print_table(headers: &[&str], rows: &[Vec<String>]) {
-    print!("{}", render_table(headers, rows));
-}
-
-fn render_table(headers: &[&str], rows: &[Vec<String>]) -> String {
-    let glyphs = style::glyphs();
+fn render_table(headers: &[&str], rows: &[Vec<String>], config: &DisplayConfig) -> String {
     let mut widths: Vec<usize> = headers.iter().map(|h| h.len()).collect();
     for row in rows {
         for (idx, cell) in row.iter().enumerate() {
             widths[idx] = widths[idx].max(visible_len(cell));
         }
     }
+
+    if !config.decorative_header {
+        return render_plain_table(headers, rows, &widths);
+    }
+
+    let glyphs = style::glyphs();
     let mut out = String::new();
     push_border(
         &mut out,
@@ -668,6 +751,27 @@ fn render_table(headers: &[&str], rows: &[Vec<String>]) -> String {
         glyphs.horizontal,
     );
     out
+}
+
+fn render_plain_table(headers: &[&str], rows: &[Vec<String>], widths: &[usize]) -> String {
+    let mut out = String::new();
+    push_plain_row(&mut out, headers.iter().copied(), widths);
+    for row in rows {
+        push_plain_row(&mut out, row.iter().map(String::as_str), widths);
+    }
+    out
+}
+
+fn push_plain_row<'a>(out: &mut String, cells: impl Iterator<Item = &'a str>, widths: &[usize]) {
+    for (idx, cell) in cells.enumerate() {
+        if idx > 0 {
+            out.push_str("  ");
+        }
+
+        out.push_str(cell);
+        out.push_str(&" ".repeat(widths[idx].saturating_sub(visible_len(cell))));
+    }
+    out.push('\n');
 }
 
 fn push_border(
@@ -783,23 +887,48 @@ fn strip_ansi(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        DisplayConfig, PORT_HEADERS, PROCESS_HEADERS, clamp_header_width,
-        display_config_with,
-        detected_terminal_width, port_summary_line, port_table_rows, process_table_rows,
-        resolve_header_width, render_clean_results_body, render_empty_port_table_message,
+        DisplayConfig, PORT_HEADERS, PROCESS_HEADERS, clamp_header_width, detected_terminal_width,
+        display_config_with, format_status, port_summary_line, port_table_rows, process_table_rows,
+        render_clean_results_body, render_empty_port_table_message,
         render_empty_process_table_message, render_header_with_config, render_port_detail_body,
-        render_process_tree_line, render_table, render_watch_event_line,
-        should_show_slow_command_spinner, slow_command_spinner_threshold, strip_ansi,
-        visible_len, format_status,
+        render_port_table_output, render_process_table_output, render_process_tree_line,
+        render_table, render_watch_event_line, resolve_header_width,
+        should_show_slow_command_spinner, slow_command_spinner_threshold, strip_ansi, visible_len,
     };
     use crate::model::{DisplayTime, PortInfo, ProcessInfo, ProcessStatus, ProcessTreeNode};
     use std::path::PathBuf;
     use std::time::Duration;
 
+    fn decorative_table_config() -> DisplayConfig {
+        DisplayConfig {
+            decorative_header: true,
+            ascii: false,
+            spinner_enabled: false,
+            spinner_threshold: slow_command_spinner_threshold(),
+            command_elapsed: None,
+            terminal_width: None,
+        }
+    }
+
+    fn quiet_table_config() -> DisplayConfig {
+        DisplayConfig {
+            decorative_header: false,
+            ascii: false,
+            spinner_enabled: false,
+            spinner_threshold: slow_command_spinner_threshold(),
+            command_elapsed: None,
+            terminal_width: None,
+        }
+    }
+
     #[test]
     fn port_table_fixture_contains_headers_missing_marker_and_summary() {
-        let rows = port_table_rows(&[port_fixture()]);
-        let table = strip_ansi(&render_table(&PORT_HEADERS, &rows));
+        let rows = port_table_rows(&[port_fixture()], &decorative_table_config());
+        let table = strip_ansi(&render_table(
+            &PORT_HEADERS,
+            &rows,
+            &decorative_table_config(),
+        ));
         assert!(table.contains("PORT"));
         assert!(table.contains("PROCESS"));
         assert!(table.contains("PID"));
@@ -819,16 +948,55 @@ mod tests {
 
     #[test]
     fn table_rendering_keeps_ansi_and_plain_text_visible() {
-        let rows = port_table_rows(&[port_fixture()]);
-        let table = render_table(&PORT_HEADERS, &rows);
+        let rows = port_table_rows(&[port_fixture()], &decorative_table_config());
+        let table = render_table(&PORT_HEADERS, &rows, &decorative_table_config());
         assert!(table.contains("\x1b["));
         assert!(strip_ansi(&table).contains("healthy"));
     }
 
     #[test]
+    fn quiet_port_table_rendering_omits_borders() {
+        let quiet_config = quiet_table_config();
+        let rows = port_table_rows(&[port_fixture()], &quiet_config);
+
+        let table = render_table(&PORT_HEADERS, &rows, &quiet_config);
+
+        assert!(table.contains("PORT"));
+        assert!(table.contains(":3000"));
+        assert!(
+            !table.contains("\x1b["),
+            "quiet table should be plain text: {table:?}"
+        );
+        assert!(table.contains("healthy"));
+        assert!(!table.contains("● healthy"));
+        assert!(!table.contains('┌'));
+        assert!(!table.contains('├'));
+        assert!(!table.contains('└'));
+        assert!(!table.contains('│'));
+    }
+
+    #[test]
+    fn quiet_table_output_omits_summary_lines() {
+        let quiet_config = quiet_table_config();
+
+        let port_output = render_port_table_output(&[port_fixture()], true, &quiet_config);
+        assert!(!port_output.contains("Run ports <number> for details"));
+        assert!(!port_output.contains("--all to show everything"));
+        assert!(!port_output.contains("1 port active"));
+
+        let process_output = render_process_table_output(&[process_fixture()], true, &quiet_config);
+        assert!(!process_output.contains("1 process"));
+        assert!(!process_output.contains("--all to show everything"));
+    }
+
+    #[test]
     fn process_table_fixture_contains_expected_columns_and_values() {
-        let rows = process_table_rows(&[process_fixture()]);
-        let table = strip_ansi(&render_table(&PROCESS_HEADERS, &rows));
+        let rows = process_table_rows(&[process_fixture()], &decorative_table_config());
+        let table = strip_ansi(&render_table(
+            &PROCESS_HEADERS,
+            &rows,
+            &decorative_table_config(),
+        ));
         assert!(table.contains("PID"));
         assert!(table.contains("PROCESS"));
         assert!(table.contains("CPU%"));
@@ -906,7 +1074,10 @@ mod tests {
         let clean = strip_ansi(&render_clean_results_body(&orphaned, &[42], &[]));
         crate::style::set_force_ascii(false);
 
-        assert!(clean.contains("v :3000"), "expected ascii-safe clean marker: {clean}");
+        assert!(
+            clean.contains("v :3000"),
+            "expected ascii-safe clean marker: {clean}"
+        );
     }
 
     #[test]
@@ -958,7 +1129,11 @@ mod tests {
     #[test]
     fn visible_width_truncation_handles_wide_unicode() {
         let rows = vec![vec!["表表表A".to_string()]];
-        let table = strip_ansi(&render_table(&["PROJECT"], &rows));
+        let table = strip_ansi(&render_table(
+            &["PROJECT"],
+            &rows,
+            &decorative_table_config(),
+        ));
         let line = table
             .lines()
             .find(|line| line.contains("表表表A"))
@@ -988,7 +1163,10 @@ mod tests {
             terminal_width: None,
         });
 
-        assert!(rendered.is_empty(), "expected no header output, got: {rendered:?}");
+        assert!(
+            rendered.is_empty(),
+            "expected no header output, got: {rendered:?}"
+        );
     }
 
     #[test]
@@ -1037,7 +1215,10 @@ mod tests {
         }));
 
         assert!(rendered.contains("Port Whisperer"));
-        assert!(rendered.contains("Working..."), "expected slow-command status line: {rendered}");
+        assert!(
+            rendered.contains("Working..."),
+            "expected slow-command status line: {rendered}"
+        );
     }
 
     #[test]
@@ -1051,7 +1232,10 @@ mod tests {
             terminal_width: Some(30),
         }));
 
-        assert!(!rendered.contains("Working..."), "did not expect slow-command status line: {rendered}");
+        assert!(
+            !rendered.contains("Working..."),
+            "did not expect slow-command status line: {rendered}"
+        );
     }
 
     #[test]
@@ -1143,7 +1327,10 @@ mod tests {
             terminal_width: Some(20),
         }));
 
-        assert!(rendered.contains("+") && !rendered.contains("┌"), "expected ascii header border: {rendered}");
+        assert!(
+            rendered.contains("+") && !rendered.contains("┌"),
+            "expected ascii header border: {rendered}"
+        );
     }
 
     #[test]
@@ -1154,8 +1341,14 @@ mod tests {
         let rendered = strip_ansi(&render_watch_event_line("new", &info, "12:00:00"));
         crate::style::set_force_ascii(false);
 
-        assert!(rendered.contains("<-"), "expected ascii arrow in watch event: {rendered}");
-        assert!(rendered.contains("^ NEW"), "expected ascii new marker in watch event: {rendered}");
+        assert!(
+            rendered.contains("<-"),
+            "expected ascii arrow in watch event: {rendered}"
+        );
+        assert!(
+            rendered.contains("^ NEW"),
+            "expected ascii new marker in watch event: {rendered}"
+        );
     }
 
     #[test]
@@ -1177,8 +1370,14 @@ mod tests {
         let child_line = strip_ansi(&render_process_tree_line(1, &child, 42));
         crate::style::set_force_ascii(false);
 
-        assert!(root_line.contains("->"), "expected ascii root pointer: {root_line}");
-        assert!(child_line.contains("`-"), "expected ascii child branch: {child_line}");
+        assert!(
+            root_line.contains("->"),
+            "expected ascii root pointer: {root_line}"
+        );
+        assert!(
+            child_line.contains("`-"),
+            "expected ascii child branch: {child_line}"
+        );
     }
 
     #[test]
@@ -1188,7 +1387,10 @@ mod tests {
         let rendered = strip_ansi(&format_status(&ProcessStatus::Healthy));
         crate::style::set_force_ascii(false);
 
-        assert!(rendered.starts_with("* "), "expected ascii status marker: {rendered}");
+        assert!(
+            rendered.starts_with("* "),
+            "expected ascii status marker: {rendered}"
+        );
     }
 
     fn port_fixture() -> PortInfo {

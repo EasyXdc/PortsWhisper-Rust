@@ -75,14 +75,15 @@ fn signal_flag_error(args: &[String]) -> Option<KillJsonResult> {
     while index < args.len() {
         if args[index] == "--signal" {
             let Some(value) = args.get(index + 1) else {
-                return Some(invalid_signal_result(String::new(), "missing value for --signal"));
+                return Some(invalid_signal_result(
+                    String::new(),
+                    "missing value for --signal",
+                ));
             };
             if normalize_signal_name(value).is_none() {
                 return Some(invalid_signal_result(
                     value.clone(),
-                    format!(
-                        "invalid signal '{value}' (supported: SIGTERM, SIGINT, SIGKILL)"
-                    ),
+                    format!("invalid signal '{value}' (supported: SIGTERM, SIGINT, SIGKILL)"),
                 ));
             }
             return None;
@@ -197,10 +198,8 @@ where
     Kill: Fn(u32, &str) -> bool,
 {
     let force = args.iter().any(|a| a == "-f" || a == "--force");
-    if !force {
-        if let Some(result) = signal_flag_error(args) {
-            return result;
-        }
+    if !force && let Some(result) = signal_flag_error(args) {
+        return result;
     }
     let raw_targets: Vec<String> = args
         .iter()
@@ -389,8 +388,15 @@ fn print_kill_result(result: &KillJsonResult) {
     let mut any_failed = false;
     for idx in 0..result.targets.len() {
         let target = &result.targets[idx];
-        let from_range = result.range_spans.iter().any(|(start, end)| idx >= *start && idx < *end);
-        if from_range && !target.success && target.pid.is_none() && target.message.starts_with("No listener on :") {
+        let from_range = result
+            .range_spans
+            .iter()
+            .any(|(start, end)| idx >= *start && idx < *end);
+        if from_range
+            && !target.success
+            && target.pid.is_none()
+            && target.message.starts_with("No listener on :")
+        {
             empty += 1;
             continue;
         }
@@ -436,7 +442,10 @@ fn render_kill_target_line(result: &KillJsonResult, index: usize) -> Option<Stri
             };
             out.push_str(&prefix);
             out.push('\n');
-            out.push_str(&style::green(format!("  {} {}", glyphs.success, target.message)));
+            out.push_str(&style::green(format!(
+                "  {} {}",
+                glyphs.success, target.message
+            )));
             Some(out)
         }
         (false, Some(_)) => {
@@ -444,10 +453,16 @@ fn render_kill_target_line(result: &KillJsonResult, index: usize) -> Option<Stri
                 out.push_str(&style::white(format!("  Killing {label}")));
                 out.push('\n');
             }
-            out.push_str(&style::red(format!("  {} {}", glyphs.failure, target.message)));
+            out.push_str(&style::red(format!(
+                "  {} {}",
+                glyphs.failure, target.message
+            )));
             Some(out)
         }
-        (false, None) => Some(style::red(format!("  {} {}", glyphs.failure, target.message))),
+        (false, None) => Some(style::red(format!(
+            "  {} {}",
+            glyphs.failure, target.message
+        ))),
         (true, None) => None,
     }
 }
@@ -607,10 +622,7 @@ mod tests {
 
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.signal, "SIGINT");
-        assert_eq!(
-            attempts.into_inner(),
-            vec![(42, "SIGINT".to_string())]
-        );
+        assert_eq!(attempts.into_inner(), vec![(42, "SIGINT".to_string())]);
     }
 
     #[test]
@@ -910,40 +922,58 @@ mod tests {
         let _guard = crate::style::glyph_test_lock().lock().unwrap();
         crate::style::set_force_ascii(true);
 
-        let success = strip_ansi(render_kill_target_line(&KillJsonResult {
-            signal: "SIGTERM".to_string(),
-            targets: vec![json_output::KillTargetPayload {
-                input: "3000".to_string(),
-                pid: Some(42),
-                port: Some(3000),
-                via: Some("port".to_string()),
-                process_name: Some("node".to_string()),
-                success: true,
-                message: "Sent SIGTERM to :3000 — node (PID 42)".to_string(),
-            }],
-            range_spans: Vec::new(),
-            exit_code: 0,
-        }, 0).expect("success line should render"));
+        let success = strip_ansi(
+            render_kill_target_line(
+                &KillJsonResult {
+                    signal: "SIGTERM".to_string(),
+                    targets: vec![json_output::KillTargetPayload {
+                        input: "3000".to_string(),
+                        pid: Some(42),
+                        port: Some(3000),
+                        via: Some("port".to_string()),
+                        process_name: Some("node".to_string()),
+                        success: true,
+                        message: "Sent SIGTERM to :3000 — node (PID 42)".to_string(),
+                    }],
+                    range_spans: Vec::new(),
+                    exit_code: 0,
+                },
+                0,
+            )
+            .expect("success line should render"),
+        );
 
-        let failure = strip_ansi(render_kill_target_line(&KillJsonResult {
-            signal: "SIGTERM".to_string(),
-            targets: vec![json_output::KillTargetPayload {
-                input: "3000".to_string(),
-                pid: Some(42),
-                port: Some(3000),
-                via: Some("port".to_string()),
-                process_name: Some("node".to_string()),
-                success: false,
-                message: "Failed. Try: sudo kill -9 42".to_string(),
-            }],
-            range_spans: Vec::new(),
-            exit_code: 1,
-        }, 0).expect("failure line should render"));
+        let failure = strip_ansi(
+            render_kill_target_line(
+                &KillJsonResult {
+                    signal: "SIGTERM".to_string(),
+                    targets: vec![json_output::KillTargetPayload {
+                        input: "3000".to_string(),
+                        pid: Some(42),
+                        port: Some(3000),
+                        via: Some("port".to_string()),
+                        process_name: Some("node".to_string()),
+                        success: false,
+                        message: "Failed. Try: sudo kill -9 42".to_string(),
+                    }],
+                    range_spans: Vec::new(),
+                    exit_code: 1,
+                },
+                0,
+            )
+            .expect("failure line should render"),
+        );
 
         crate::style::set_force_ascii(false);
 
-        assert!(success.contains("  v Sent SIGTERM"), "expected ascii success marker: {success}");
-        assert!(failure.contains("  x Failed."), "expected ascii failure marker: {failure}");
+        assert!(
+            success.contains("  v Sent SIGTERM"),
+            "expected ascii success marker: {success}"
+        );
+        assert!(
+            failure.contains("  x Failed."),
+            "expected ascii failure marker: {failure}"
+        );
     }
 
     fn fake_port(port: u16, pid: u32) -> PortInfo {

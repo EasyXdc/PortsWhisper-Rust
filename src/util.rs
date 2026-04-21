@@ -32,7 +32,13 @@ where
     I: IntoIterator<Item = A>,
     A: AsRef<OsStr>,
 {
-    run_output_with_env(program, args, timeout, true, [("LANG", "C"), ("LC_ALL", "C")])
+    run_output_with_env(
+        program,
+        args,
+        timeout,
+        true,
+        [("LANG", "C"), ("LC_ALL", "C")],
+    )
 }
 
 fn run_output_silent_probe<S, I, A>(
@@ -401,12 +407,9 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn unix_ps_commands_are_wrapped_with_lang_c() {
-        let out = run_output_with_c_locale(
-            "sh",
-            ["-c", "printf '%s/%s' \"$LANG\" \"$LC_ALL\""],
-            None,
-        )
-        .expect("should succeed");
+        let out =
+            run_output_with_c_locale("sh", ["-c", "printf '%s/%s' \"$LANG\" \"$LC_ALL\""], None)
+                .expect("should succeed");
 
         assert_eq!(out, "C/C");
     }

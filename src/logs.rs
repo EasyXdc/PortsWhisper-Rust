@@ -58,8 +58,7 @@ pub fn run_logs(args: &[String]) -> i32 {
             "{}",
             style::red(format!(
                 "\n  {} \"{}\" is not a valid port/PID\n",
-                glyphs.failure,
-                parsed.targets[0]
+                glyphs.failure, parsed.targets[0]
             ))
         );
         return 1;
@@ -186,17 +185,18 @@ pub fn run_logs(args: &[String]) -> i32 {
         );
     }
 
-    if let Some(sys_cmd) = get_system_log_command_with_since(
-        resolved.pid,
-        parsed.follow,
-        parsed.since.as_deref(),
-    ) {
+    if let Some(sys_cmd) =
+        get_system_log_command_with_since(resolved.pid, parsed.follow, parsed.since.as_deref())
+    {
         println!(
             "{}",
             style::yellow("  No log files found. Falling back to system log...\n")
         );
         println!("  {}\n", style::dim(format!("$ {sys_cmd}")));
-        return run_shell(&apply_grep_to_shell_command(&sys_cmd, parsed.grep.as_deref()));
+        return run_shell(&apply_grep_to_shell_command(
+            &sys_cmd,
+            parsed.grep.as_deref(),
+        ));
     }
     println!(
         "{}",
@@ -372,18 +372,16 @@ where
                     parsed.lines.clone(),
                     true,
                     Some(log_source_payload(&file, None)),
-                        Some(
-                            apply_grep_filter(
-                                read_log(&file.path, &parsed.lines, false).map_err(|message| {
-                                    LogsJsonError {
-                                        code: "log_read_failed".to_string(),
-                                        message,
-                                        exit_code: 1,
-                                    }
-                                })?,
-                                parsed.grep.as_deref(),
-                            ),
-                        ),
+                    Some(apply_grep_filter(
+                        read_log(&file.path, &parsed.lines, false).map_err(|message| {
+                            LogsJsonError {
+                                code: "log_read_failed".to_string(),
+                                message,
+                                exit_code: 1,
+                            }
+                        })?,
+                        parsed.grep.as_deref(),
+                    )),
                 ),
                 exit_code: 0,
             }),
@@ -721,7 +719,11 @@ pub fn get_system_log_command(pid: u32, follow: bool) -> Option<String> {
     get_system_log_command_with_since(pid, follow, None)
 }
 
-fn get_system_log_command_with_since(pid: u32, follow: bool, since: Option<&str>) -> Option<String> {
+fn get_system_log_command_with_since(
+    pid: u32,
+    follow: bool,
+    since: Option<&str>,
+) -> Option<String> {
     if cfg!(target_os = "macos") {
         Some(if follow {
             format!("log stream --predicate 'processID == {pid}' --style compact")
@@ -766,7 +768,10 @@ pub(crate) fn parse_lines(args: &[String]) -> &str {
     "50"
 }
 
-fn parse_flag_value<'a>(args: &'a [String], flag: &'static str) -> Result<Option<&'a str>, LogsRequestError> {
+fn parse_flag_value<'a>(
+    args: &'a [String],
+    flag: &'static str,
+) -> Result<Option<&'a str>, LogsRequestError> {
     for arg in args {
         if let Some(value) = arg.strip_prefix(&format!("{flag}=")) {
             return Ok(Some(value));
@@ -810,9 +815,13 @@ fn apply_grep_to_shell_command(cmd: &str, grep: Option<&str>) -> String {
 
 fn logs_usage_lines() -> [String; 3] {
     [
-        style::red("\n  Usage: ports logs <port|pid> [-f] [--lines=N] [--err] [--grep <pattern>] [--since <value>]\n"),
+        style::red(
+            "\n  Usage: ports logs <port|pid> [-f] [--lines=N] [--err] [--grep <pattern>] [--since <value>]\n",
+        ),
         style::gray("  Show log output for a process running on a port, with optional filtering."),
-        style::gray("  Use -f/--follow to stream, --grep to match lines, and --since for system logs.\n"),
+        style::gray(
+            "  Use -f/--follow to stream, --grep to match lines, and --since for system logs.\n",
+        ),
     ]
 }
 
@@ -832,10 +841,9 @@ fn log_header_lines(port_label: &str, pid: u32, process_name: &str) -> [String; 
 mod tests {
     use super::{
         LogSelection, LogSelectionChoice, LogsJsonError, LogsJsonResult, LogsRequestError,
-        TailCommand,
-        apply_grep_to_shell_command, build_tail_command, choose_log_file_index,
+        TailCommand, apply_grep_to_shell_command, build_tail_command, choose_log_file_index,
         get_process_cwd_from_lsof_result, is_log_like_path, log_files_from_lsof_result,
-        log_header_lines, merge_log_discovery_results, logs_usage_lines, parse_lines,
+        log_header_lines, logs_usage_lines, merge_log_discovery_results, parse_lines,
         parse_logs_request, render_logs_json_result, run_logs_json_with, select_log_file,
         sort_and_dedupe_log_files, tail_follow_shell_command,
     };
@@ -1032,12 +1040,7 @@ mod tests {
     #[test]
     fn logs_argument_parsing_supports_grep_and_since_flags() {
         let parsed = parse_logs_request(&args(&[
-            "logs",
-            "3000",
-            "--grep",
-            "error",
-            "--since",
-            "10m",
+            "logs", "3000", "--grep", "error", "--since", "10m",
         ]))
         .expect("logs args should parse");
 
@@ -1077,11 +1080,8 @@ mod tests {
 
     #[test]
     fn follow_mode_file_log_command_applies_grep_filter() {
-        let command = tail_follow_shell_command(
-            &PathBuf::from("/app/server.log"),
-            "25",
-            Some("error"),
-        );
+        let command =
+            tail_follow_shell_command(&PathBuf::from("/app/server.log"), "25", Some("error"));
 
         if cfg!(target_os = "windows") {
             assert!(command.contains("Get-Content -Path '/app/server.log' -Tail 25 -Wait"));
@@ -1205,7 +1205,10 @@ mod tests {
         .expect("system logs should succeed");
 
         assert_eq!(result.payload.output.as_deref(), Some("system line"));
-        let source = result.payload.source.expect("system source should be present");
+        let source = result
+            .payload
+            .source
+            .expect("system source should be present");
         assert_eq!(source.command.as_deref(), Some("system-log --since 2h"));
     }
 
@@ -1425,7 +1428,11 @@ mod tests {
         let header = log_header_lines(":3000", 42, "node");
         crate::style::set_force_ascii(false);
 
-        assert!(header[0].contains("->"), "expected ascii-safe header marker: {}", header[0]);
+        assert!(
+            header[0].contains("->"),
+            "expected ascii-safe header marker: {}",
+            header[0]
+        );
     }
 
     fn fake_port(port: u16, pid: u32) -> PortInfo {
@@ -1471,7 +1478,7 @@ fn tail_file(path: &Path, lines: &str, follow: bool, grep: Option<&str>) -> i32 
         }
     }
 
-    return run_shell(&tail_follow_shell_command(path, lines, grep));
+    run_shell(&tail_follow_shell_command(path, lines, grep))
 }
 
 fn tail_follow_shell_command(path: &Path, lines: &str, grep: Option<&str>) -> String {
