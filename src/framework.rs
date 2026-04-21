@@ -1,6 +1,58 @@
 use crate::util::basename;
 use std::path::Path;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FrameworkDisplayMetadata {
+    pub ansi_prefix: &'static str,
+}
+
+pub fn display_metadata(name: &str) -> FrameworkDisplayMetadata {
+    match name {
+        "Next.js" => FrameworkDisplayMetadata {
+            ansi_prefix: "\x1b[37m\x1b[40m",
+        },
+        "Vite" | "Python" | "esbuild" | "Elasticsearch" => FrameworkDisplayMetadata {
+            ansi_prefix: "\x1b[33m",
+        },
+        "React" | "FastAPI" | "Go" => FrameworkDisplayMetadata {
+            ansi_prefix: "\x1b[36m",
+        },
+        "Vue" | "Nuxt" | "Django" | "Node.js" | "MongoDB" | "nginx" => {
+            FrameworkDisplayMetadata {
+                ansi_prefix: "\x1b[32m",
+            }
+        }
+        "Angular" | "NestJS" | "Rails" | "Ruby" | "Java" | "Redis" | "MinIO" => {
+            FrameworkDisplayMetadata {
+                ansi_prefix: "\x1b[31m",
+            }
+        }
+        "Svelte" | "SvelteKit" | "Hono" | "RabbitMQ" => FrameworkDisplayMetadata {
+            ansi_prefix: "\x1b[38;2;255;102;0m",
+        },
+        "Rust" => FrameworkDisplayMetadata {
+            ansi_prefix: "\x1b[38;2;222;165;93m",
+        },
+        "Parcel" => FrameworkDisplayMetadata {
+            ansi_prefix: "\x1b[38;2;224;178;77m",
+        },
+        "Express" => FrameworkDisplayMetadata {
+            ansi_prefix: "\x1b[90m",
+        },
+        "Remix" | "Docker" | "PostgreSQL" | "MySQL" | "Webpack" => {
+            FrameworkDisplayMetadata {
+                ansi_prefix: "\x1b[34m",
+            }
+        }
+        "Astro" | "Gatsby" => FrameworkDisplayMetadata {
+            ansi_prefix: "\x1b[35m",
+        },
+        _ => FrameworkDisplayMetadata {
+            ansi_prefix: "\x1b[37m",
+        },
+    }
+}
+
 pub fn is_dev_process(process_name: &str, command: &str) -> bool {
     let name = process_name.to_lowercase();
     let cmd = command.to_lowercase();
@@ -361,6 +413,28 @@ mod tests {
             "server.js 3000 extra"
         );
         assert_eq!(summarize_command("node --watch", "node"), "node");
+    }
+
+    #[test]
+    fn display_metadata_returns_expected_prefixes() {
+        assert_eq!(
+            display_metadata("Next.js"),
+            FrameworkDisplayMetadata {
+                ansi_prefix: "\x1b[37m\x1b[40m",
+            }
+        );
+        assert_eq!(
+            display_metadata("SvelteKit"),
+            FrameworkDisplayMetadata {
+                ansi_prefix: "\x1b[38;2;255;102;0m",
+            }
+        );
+        assert_eq!(
+            display_metadata("Unknown"),
+            FrameworkDisplayMetadata {
+                ansi_prefix: "\x1b[37m",
+            }
+        );
     }
 
     fn temp_dir(label: &str) -> std::path::PathBuf {

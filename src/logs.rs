@@ -12,7 +12,14 @@ struct LogsRequest {
     follow: bool,
     err_only: bool,
     lines: String,
+    grep: Option<String>,
+    since: Option<String>,
     targets: Vec<String>,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum LogsRequestError {
+    MissingValue(&'static str),
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -29,7 +36,17 @@ struct LogsJsonError {
 }
 
 pub fn run_logs(args: &[String]) -> i32 {
-    let parsed = parse_logs_request(args);
+    let glyphs = style::glyphs();
+    let parsed = match parse_logs_request(args) {
+        Ok(parsed) => parsed,
+        Err(LogsRequestError::MissingValue(flag)) => {
+            println!(
+                "{}",
+                style::red(format!("\n  {} missing value for {flag}\n", glyphs.failure))
+            );
+            return 1;
+        }
+    };
     if parsed.targets.is_empty() {
         for line in logs_usage_lines() {
             println!("{line}");
@@ -40,7 +57,8 @@ pub fn run_logs(args: &[String]) -> i32 {
         println!(
             "{}",
             style::red(format!(
-                "\n  ✕ \"{}\" is not a valid port/PID\n",
+                "\n  {} \"{}\" is not a valid port/PID\n",
+                glyphs.failure,
                 parsed.targets[0]
             ))
         );
@@ -52,7 +70,7 @@ pub fn run_logs(args: &[String]) -> i32 {
         } else {
             format!("No process with PID {target}")
         };
-        println!("{}", style::red(format!("\n  ✕ {msg}\n")));
+        println!("{}", style::red(format!("\n  {} {msg}\n", glyphs.failure)));
         return 1;
     };
     let port_label = match resolved.via {
@@ -75,10 +93,15 @@ pub fn run_logs(args: &[String]) -> i32 {
         LogSelection::Tail(file) if parsed.err_only => {
             println!(
                 "  {} Tailing stderr: {}\n",
-                style::yellow("▸"),
+                style::yellow(glyphs.logs_pointer),
                 style::dim(file.path.to_string_lossy())
             );
-            return tail_file(&file.path, &parsed.lines, parsed.follow);
+            return tail_file(
+                &file.path,
+                &parsed.lines,
+                parsed.follow,
+                parsed.grep.as_deref(),
+            );
         }
         LogSelection::NoStderr => {
             println!(
@@ -102,11 +125,16 @@ pub fn run_logs(args: &[String]) -> i32 {
             };
             println!(
                 "  {} Tailing {}: {}\n",
-                style::green("▸"),
+                style::green(glyphs.logs_pointer),
                 label,
                 style::dim(file.path.to_string_lossy())
             );
-            return tail_file(&file.path, &parsed.lines, parsed.follow);
+            return tail_file(
+                &file.path,
+                &parsed.lines,
+                parsed.follow,
+                parsed.grep.as_deref(),
+            );
         }
         LogSelection::NeedsUserSelection => {}
         LogSelection::NoFiles => {}
@@ -147,19 +175,28 @@ pub fn run_logs(args: &[String]) -> i32 {
         };
         println!(
             "\n  {} Tailing: {}\n",
-            style::green("▸"),
+            style::green(glyphs.logs_pointer),
             style::dim(selected.path.to_string_lossy())
         );
-        return tail_file(&selected.path, &parsed.lines, parsed.follow);
+        return tail_file(
+            &selected.path,
+            &parsed.lines,
+            parsed.follow,
+            parsed.grep.as_deref(),
+        );
     }
 
-    if let Some(sys_cmd) = get_system_log_command(resolved.pid, parsed.follow) {
+    if let Some(sys_cmd) = get_system_log_command_with_since(
+        resolved.pid,
+        parsed.follow,
+        parsed.since.as_deref(),
+    ) {
         println!(
             "{}",
             style::yellow("  No log files found. Falling back to system log...\n")
         );
         println!("  {}\n", style::dim(format!("$ {sys_cmd}")));
-        return run_shell(&sys_cmd);
+        return run_shell(&apply_grep_to_shell_command(&sys_cmd, parsed.grep.as_deref()));
     }
     println!(
         "{}",
@@ -186,7 +223,7 @@ pub fn run_logs_json(args: &[String]) -> i32 {
             scanner::resolve_kill_target,
             get_process_log_files,
             read_log_output,
-            get_system_log_command,
+            get_system_log_command_with_since,
             run_shell_output,
         ),
     ) {
@@ -226,29 +263,39 @@ fn render_logs_json_result(
     }
 }
 
-fn parse_logs_request(args: &[String]) -> LogsRequest {
+fn parse_logs_request(args: &[String]) -> Result<LogsRequest, LogsRequestError> {
     let follow = args.iter().any(|a| a == "-f" || a == "--follow");
     let err_only = args.iter().any(|a| a == "--err");
     let lines = parse_lines(args).to_string();
+    let grep = parse_flag_value(args, "--grep")?.map(ToOwned::to_owned);
+    let since = parse_flag_value(args, "--since")?.map(ToOwned::to_owned);
     let mut targets = Vec::new();
     let mut iter = args.iter().skip(1).peekable();
     while let Some(arg) = iter.next() {
         let s = arg.as_str();
-        if s == "-f" || s == "--follow" || s == "--err" || s.starts_with("--lines=") {
+        if s == "-f"
+            || s == "--follow"
+            || s == "--err"
+            || s.starts_with("--lines=")
+            || s.starts_with("--grep=")
+            || s.starts_with("--since=")
+        {
             continue;
         }
-        if s == "--lines" {
+        if s == "--lines" || s == "--grep" || s == "--since" {
             iter.next();
             continue;
         }
         targets.push(arg.clone());
     }
-    LogsRequest {
+    Ok(LogsRequest {
         follow,
         err_only,
         lines,
+        grep,
+        since,
         targets,
-    }
+    })
 }
 
 fn run_logs_json_with<Resolve, Discover, ReadLog, SystemCmd, RunSystem>(
@@ -263,21 +310,27 @@ where
     Resolve: Fn(u32) -> Option<crate::model::KillTargetResolution>,
     Discover: Fn(u32) -> Vec<LogFile>,
     ReadLog: Fn(&Path, &str, bool) -> Result<String, String>,
-    SystemCmd: Fn(u32, bool) -> Option<String>,
+    SystemCmd: Fn(u32, bool, Option<&str>) -> Option<String>,
     RunSystem: Fn(&str) -> Result<String, String>,
 {
-    let parsed = parse_logs_request(args);
+    let parsed = parse_logs_request(args).map_err(|err| match err {
+        LogsRequestError::MissingValue(flag) => LogsJsonError {
+            code: "usage".to_string(),
+            message: format!("missing value for {flag}"),
+            exit_code: 1,
+        },
+    })?;
     if parsed.follow {
         return Err(LogsJsonError {
             code: "unsupported_follow".to_string(),
-            message: "follow mode is not supported with --json yet".to_string(),
+            message: "follow mode is not supported with --json for ports logs <port|pid> [-f] [--lines=N] [--err] [--grep <pattern>] [--since <value>] yet".to_string(),
             exit_code: 1,
         });
     }
     if parsed.targets.is_empty() {
         return Err(LogsJsonError {
             code: "usage".to_string(),
-            message: "Usage: ports logs <port|pid> [-f] [--lines=N] [--err]".to_string(),
+            message: "Usage: ports logs <port|pid> [-f] [--lines=N] [--err] [--grep <pattern>] [--since <value>]".to_string(),
             exit_code: 1,
         });
     }
@@ -319,15 +372,18 @@ where
                     parsed.lines.clone(),
                     true,
                     Some(log_source_payload(&file, None)),
-                    Some(
-                        read_log(&file.path, &parsed.lines, false).map_err(|message| {
-                            LogsJsonError {
-                                code: "log_read_failed".to_string(),
-                                message,
-                                exit_code: 1,
-                            }
-                        })?,
-                    ),
+                        Some(
+                            apply_grep_filter(
+                                read_log(&file.path, &parsed.lines, false).map_err(|message| {
+                                    LogsJsonError {
+                                        code: "log_read_failed".to_string(),
+                                        message,
+                                        exit_code: 1,
+                                    }
+                                })?,
+                                parsed.grep.as_deref(),
+                            ),
+                        ),
                 ),
                 exit_code: 0,
             }),
@@ -358,7 +414,7 @@ where
                 parsed.lines.clone(),
                 false,
                 Some(log_source_payload(&file, None)),
-                Some(
+                Some(apply_grep_filter(
                     read_log(&file.path, &parsed.lines, false).map_err(|message| {
                         LogsJsonError {
                             code: "log_read_failed".to_string(),
@@ -366,7 +422,8 @@ where
                             exit_code: 1,
                         }
                     })?,
-                ),
+                    parsed.grep.as_deref(),
+                )),
             ),
             exit_code: 0,
         }),
@@ -377,7 +434,7 @@ where
             exit_code: 1,
         }),
         LogSelection::NoFiles => {
-            if let Some(cmd) = system_log_command(resolved.pid, false) {
+            if let Some(cmd) = system_log_command(resolved.pid, false, parsed.since.as_deref()) {
                 return Ok(LogsJsonResult {
                     payload: json_output::logs_payload(
                         resolved.pid,
@@ -391,11 +448,14 @@ where
                             path: None,
                             command: Some(cmd.clone()),
                         }),
-                        Some(run_system_log(&cmd).map_err(|message| LogsJsonError {
-                            code: "system_log_failed".to_string(),
-                            message,
-                            exit_code: 1,
-                        })?),
+                        Some(apply_grep_filter(
+                            run_system_log(&cmd).map_err(|message| LogsJsonError {
+                                code: "system_log_failed".to_string(),
+                                message,
+                                exit_code: 1,
+                            })?,
+                            parsed.grep.as_deref(),
+                        )),
                     ),
                     exit_code: 0,
                 });
@@ -432,53 +492,25 @@ fn log_source_payload(file: &LogFile, command: Option<String>) -> json_output::L
 }
 
 pub fn get_process_log_files(pid: u32) -> Vec<LogFile> {
-    let mut files = Vec::new();
-    if cfg!(target_os = "macos") || cfg!(target_os = "linux") {
-        files.extend(log_files_from_lsof_result(run_output(
+    let mut files = if cfg!(target_os = "linux") {
+        let proc_files = log_files_from_proc_fd(pid);
+        let lsof_files = log_files_from_lsof_result(run_output(
             "lsof",
             ["-p", &pid.to_string()],
             Some(std::time::Duration::from_millis(5000)),
-        )));
-        if files.is_empty() && cfg!(target_os = "linux") {
-            let fd_dir = PathBuf::from(format!("/proc/{pid}/fd"));
-            if let Ok(entries) = std::fs::read_dir(fd_dir) {
-                for entry in entries.flatten() {
-                    let fd_name = entry.file_name().to_string_lossy().to_string();
-                    if let Ok(target) = std::fs::read_link(entry.path()) {
-                        let target_s = target.to_string_lossy();
-                        if fd_name == "1"
-                            && !target_s.starts_with("/dev/")
-                            && !target_s.starts_with("pipe:")
-                        {
-                            files.push(LogFile {
-                                path: target,
-                                fd: LogFdKind::Stdout,
-                                kind: "redirect".to_string(),
-                                priority: 1,
-                            });
-                        } else if fd_name == "2"
-                            && !target_s.starts_with("/dev/")
-                            && !target_s.starts_with("pipe:")
-                        {
-                            files.push(LogFile {
-                                path: target,
-                                fd: LogFdKind::Stderr,
-                                kind: "redirect".to_string(),
-                                priority: 1,
-                            });
-                        } else if is_log_like_path(&target_s) {
-                            files.push(LogFile {
-                                path: target,
-                                fd: LogFdKind::File,
-                                kind: "logfile".to_string(),
-                                priority: 2,
-                            });
-                        }
-                    }
-                }
-            }
+        ));
+        merge_log_discovery_results(proc_files, lsof_files)
+    } else {
+        let mut files = Vec::new();
+        if cfg!(target_os = "macos") {
+            files.extend(log_files_from_lsof_result(run_output(
+                "lsof",
+                ["-p", &pid.to_string()],
+                Some(std::time::Duration::from_millis(5000)),
+            )));
         }
-    }
+        files
+    };
 
     if let Some(cwd) = get_process_cwd(pid) {
         for rel in [
@@ -501,6 +533,12 @@ pub fn get_process_log_files(pid: u32) -> Vec<LogFile> {
             }
         }
     }
+    sort_and_dedupe_log_files(files)
+}
+
+fn merge_log_discovery_results(primary: Vec<LogFile>, fallback: Vec<LogFile>) -> Vec<LogFile> {
+    let mut files = primary;
+    files.extend(fallback);
     sort_and_dedupe_log_files(files)
 }
 
@@ -630,6 +668,48 @@ fn log_files_from_lsof_result(result: Result<String, PortError>) -> Vec<LogFile>
     files
 }
 
+fn log_files_from_proc_fd(pid: u32) -> Vec<LogFile> {
+    let mut files = Vec::new();
+    let fd_dir = PathBuf::from(format!("/proc/{pid}/fd"));
+    if let Ok(entries) = std::fs::read_dir(fd_dir) {
+        for entry in entries.flatten() {
+            let fd_name = entry.file_name().to_string_lossy().to_string();
+            if let Ok(target) = std::fs::read_link(entry.path()) {
+                let target_s = target.to_string_lossy();
+                if fd_name == "1"
+                    && !target_s.starts_with("/dev/")
+                    && !target_s.starts_with("pipe:")
+                {
+                    files.push(LogFile {
+                        path: target,
+                        fd: LogFdKind::Stdout,
+                        kind: "redirect".to_string(),
+                        priority: 1,
+                    });
+                } else if fd_name == "2"
+                    && !target_s.starts_with("/dev/")
+                    && !target_s.starts_with("pipe:")
+                {
+                    files.push(LogFile {
+                        path: target,
+                        fd: LogFdKind::Stderr,
+                        kind: "redirect".to_string(),
+                        priority: 1,
+                    });
+                } else if is_log_like_path(&target_s) {
+                    files.push(LogFile {
+                        path: target,
+                        fd: LogFdKind::File,
+                        kind: "logfile".to_string(),
+                        priority: 2,
+                    });
+                }
+            }
+        }
+    }
+    files
+}
+
 fn get_process_cwd_from_lsof_result(result: Result<String, PortError>) -> Option<PathBuf> {
     let raw = result.ok().unwrap_or_default();
     raw.lines()
@@ -638,17 +718,30 @@ fn get_process_cwd_from_lsof_result(result: Result<String, PortError>) -> Option
 }
 
 pub fn get_system_log_command(pid: u32, follow: bool) -> Option<String> {
+    get_system_log_command_with_since(pid, follow, None)
+}
+
+fn get_system_log_command_with_since(pid: u32, follow: bool, since: Option<&str>) -> Option<String> {
     if cfg!(target_os = "macos") {
         Some(if follow {
             format!("log stream --predicate 'processID == {pid}' --style compact")
         } else {
-            format!("log show --predicate 'processID == {pid}' --style compact --last 1m")
+            format!(
+                "log show --predicate 'processID == {pid}' --style compact --last {}",
+                since.unwrap_or("1m")
+            )
         })
     } else if cfg!(target_os = "linux") {
         Some(if follow {
-            format!("journalctl _PID={pid} -f --no-pager")
+            match since {
+                Some(since) => format!("journalctl _PID={pid} --since {since:?} -f --no-pager"),
+                None => format!("journalctl _PID={pid} -f --no-pager"),
+            }
         } else {
-            format!("journalctl _PID={pid} --no-pager -n 50")
+            match since {
+                Some(since) => format!("journalctl _PID={pid} --since {since:?} --no-pager -n 50"),
+                None => format!("journalctl _PID={pid} --no-pager -n 50"),
+            }
         })
     } else if cfg!(target_os = "windows") {
         Some(format!(
@@ -673,17 +766,61 @@ pub(crate) fn parse_lines(args: &[String]) -> &str {
     "50"
 }
 
+fn parse_flag_value<'a>(args: &'a [String], flag: &'static str) -> Result<Option<&'a str>, LogsRequestError> {
+    for arg in args {
+        if let Some(value) = arg.strip_prefix(&format!("{flag}=")) {
+            return Ok(Some(value));
+        }
+    }
+    for pair in args.windows(2) {
+        if pair[0] == flag {
+            if pair[1].starts_with('-') {
+                return Err(LogsRequestError::MissingValue(flag));
+            }
+            return Ok(Some(&pair[1]));
+        }
+    }
+    if args.last().map(String::as_str) == Some(flag) {
+        return Err(LogsRequestError::MissingValue(flag));
+    }
+    Ok(None)
+}
+
+fn apply_grep_filter(output: String, pattern: Option<&str>) -> String {
+    let Some(pattern) = pattern else {
+        return output.trim_end_matches('\n').to_string();
+    };
+    output
+        .lines()
+        .filter(|line| line.contains(pattern))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn apply_grep_to_shell_command(cmd: &str, grep: Option<&str>) -> String {
+    let Some(grep) = grep else {
+        return cmd.to_string();
+    };
+    if cfg!(target_os = "windows") {
+        format!(r#"{cmd} | Select-String -SimpleMatch {grep:?}"#)
+    } else {
+        format!("{cmd} | grep --line-buffered -F -- {grep:?}")
+    }
+}
+
 fn logs_usage_lines() -> [String; 3] {
     [
-        style::red("\n  Usage: ports logs <port|pid> [-f] [--lines=N] [--err]\n"),
-        style::gray("  Show log output for a process running on a port."),
-        style::gray("  Use -f or --follow to stream new lines.\n"),
+        style::red("\n  Usage: ports logs <port|pid> [-f] [--lines=N] [--err] [--grep <pattern>] [--since <value>]\n"),
+        style::gray("  Show log output for a process running on a port, with optional filtering."),
+        style::gray("  Use -f/--follow to stream, --grep to match lines, and --since for system logs.\n"),
     ]
 }
 
 fn log_header_lines(port_label: &str, pid: u32, process_name: &str) -> [String; 1] {
+    let glyphs = style::glyphs();
     [format!(
-        "{}{}",
+        "{} {}{}",
+        style::cyan_bold(glyphs.logs_pointer),
         style::cyan_bold("  Port Whisperer"),
         style::gray(format!(
             " — logs for {port_label} ({process_name}, PID {pid})"
@@ -694,11 +831,13 @@ fn log_header_lines(port_label: &str, pid: u32, process_name: &str) -> [String; 
 #[cfg(test)]
 mod tests {
     use super::{
-        LogSelection, LogSelectionChoice, LogsJsonError, LogsJsonResult, TailCommand,
-        build_tail_command, choose_log_file_index, get_process_cwd_from_lsof_result,
-        is_log_like_path, log_files_from_lsof_result, log_header_lines, logs_usage_lines,
-        parse_lines, parse_logs_request, render_logs_json_result, run_logs_json_with,
-        select_log_file, sort_and_dedupe_log_files,
+        LogSelection, LogSelectionChoice, LogsJsonError, LogsJsonResult, LogsRequestError,
+        TailCommand,
+        apply_grep_to_shell_command, build_tail_command, choose_log_file_index,
+        get_process_cwd_from_lsof_result, is_log_like_path, log_files_from_lsof_result,
+        log_header_lines, merge_log_discovery_results, logs_usage_lines, parse_lines,
+        parse_logs_request, render_logs_json_result, run_logs_json_with, select_log_file,
+        sort_and_dedupe_log_files, tail_follow_shell_command,
     };
     use crate::error::{PortError, drain_user_warnings, record_user_warning, verbose_test_lock};
     use crate::model::{
@@ -748,6 +887,29 @@ mod tests {
     }
 
     #[test]
+    fn merge_log_discovery_results_prefers_proc_results_before_lsof_fallback() {
+        let proc_files = vec![
+            log_file("/app/out.log", LogFdKind::Stdout, "redirect", 1),
+            log_file("/app/app.log", LogFdKind::File, "logfile", 2),
+        ];
+        let lsof_files = vec![
+            log_file("/app/out.log", LogFdKind::File, "logfile", 2),
+            log_file("/app/err.log", LogFdKind::Stderr, "redirect", 1),
+        ];
+
+        let merged = merge_log_discovery_results(proc_files, lsof_files);
+
+        assert_eq!(
+            merged,
+            vec![
+                log_file("/app/out.log", LogFdKind::Stdout, "redirect", 1),
+                log_file("/app/err.log", LogFdKind::Stderr, "redirect", 1),
+                log_file("/app/app.log", LogFdKind::File, "logfile", 2),
+            ]
+        );
+    }
+
+    #[test]
     fn fake_log_files_drive_log_selection_without_tailing() {
         let stdout = log_file("/app/out.log", LogFdKind::Stdout, "redirect", 1);
         let stderr = log_file("/app/err.log", LogFdKind::Stderr, "redirect", 1);
@@ -770,9 +932,10 @@ mod tests {
     #[test]
     fn logs_messages_include_usage_and_header_fields() {
         let usage = logs_usage_lines();
-        assert!(usage[0].contains("Usage: ports logs <port|pid> [-f] [--lines=N] [--err]"));
-        assert!(usage[1].contains("Show log output for a process running on a port."));
-        assert!(usage[2].contains("Use -f or --follow to stream new lines."));
+        assert!(usage[0].contains("Usage: ports logs <port|pid> [-f] [--lines=N] [--err] [--grep <pattern>] [--since <value>]"));
+        assert!(usage[1].contains("optional filtering"));
+        assert!(usage[2].contains("--grep"));
+        assert!(usage[2].contains("--since"));
 
         let header = log_header_lines(":3000", 42, "node");
         assert!(header[0].contains("Port Whisperer"));
@@ -846,20 +1009,87 @@ mod tests {
 
     #[test]
     fn logs_argument_parsing_matches_node_reference_behavior() {
-        let parsed = parse_logs_request(&args(&["logs", "3000", "--lines=5", "-f", "--err"]));
+        let parsed = parse_logs_request(&args(&["logs", "3000", "--lines=5", "-f", "--err"]))
+            .expect("logs args should parse");
 
         assert_eq!(parsed.targets, vec!["3000".to_string()]);
         assert_eq!(parsed.lines, "5");
         assert!(parsed.follow);
         assert!(parsed.err_only);
+        assert_eq!(parsed.grep, None);
+        assert_eq!(parsed.since, None);
     }
 
     #[test]
     fn logs_argument_parsing_keeps_target_when_it_matches_lines_value() {
-        let parsed = parse_logs_request(&args(&["logs", "3000", "--lines", "3000"]));
+        let parsed = parse_logs_request(&args(&["logs", "3000", "--lines", "3000"]))
+            .expect("logs args should parse");
 
         assert_eq!(parsed.targets, vec!["3000".to_string()]);
         assert_eq!(parsed.lines, "3000");
+    }
+
+    #[test]
+    fn logs_argument_parsing_supports_grep_and_since_flags() {
+        let parsed = parse_logs_request(&args(&[
+            "logs",
+            "3000",
+            "--grep",
+            "error",
+            "--since",
+            "10m",
+        ]))
+        .expect("logs args should parse");
+
+        assert_eq!(parsed.targets, vec!["3000".to_string()]);
+        assert_eq!(parsed.grep.as_deref(), Some("error"));
+        assert_eq!(parsed.since.as_deref(), Some("10m"));
+        assert_eq!(parsed.lines, "50");
+    }
+
+    #[test]
+    fn logs_argument_parsing_rejects_missing_grep_and_since_values() {
+        assert!(matches!(
+            parse_logs_request(&args(&["logs", "3000", "--grep"])),
+            Err(LogsRequestError::MissingValue("--grep"))
+        ));
+        assert!(matches!(
+            parse_logs_request(&args(&["logs", "3000", "--since"])),
+            Err(LogsRequestError::MissingValue("--since"))
+        ));
+        assert!(matches!(
+            parse_logs_request(&args(&["logs", "3000", "--grep", "--since", "5m"])),
+            Err(LogsRequestError::MissingValue("--grep"))
+        ));
+    }
+
+    #[test]
+    fn grep_shell_command_wraps_streaming_plain_mode_commands() {
+        let command = apply_grep_to_shell_command("tail -f -n 25 /app/server.log", Some("error"));
+
+        if cfg!(target_os = "windows") {
+            assert!(command.contains("Select-String -SimpleMatch"));
+        } else {
+            assert!(command.contains("grep --line-buffered -F -- \"error\""));
+            assert!(command.starts_with("tail -f -n 25 /app/server.log | "));
+        }
+    }
+
+    #[test]
+    fn follow_mode_file_log_command_applies_grep_filter() {
+        let command = tail_follow_shell_command(
+            &PathBuf::from("/app/server.log"),
+            "25",
+            Some("error"),
+        );
+
+        if cfg!(target_os = "windows") {
+            assert!(command.contains("Get-Content -Path '/app/server.log' -Tail 25 -Wait"));
+            assert!(command.contains("Select-String -SimpleMatch"));
+        } else {
+            assert!(command.contains("tail -f -n 25 /app/server.log"));
+            assert!(command.contains("grep --line-buffered -F -- \"error\""));
+        }
     }
 
     #[test]
@@ -901,7 +1131,7 @@ mod tests {
                 assert!(!follow);
                 Ok("ready\nrequest /health".to_string())
             },
-            |_pid, _follow| None,
+            |_pid, _follow, _since| None,
             |_cmd| unreachable!("system logs should not be used when a file exists"),
         )
         .expect("json logs should succeed");
@@ -924,6 +1154,62 @@ mod tests {
     }
 
     #[test]
+    fn json_logs_applies_grep_filter_to_log_file_output() {
+        let result = run_logs_json_with(
+            &args(&["logs", "3000", "--grep", "error"]),
+            |target| match target {
+                3000 => Some(KillTargetResolution {
+                    pid: 42,
+                    via: KillResolutionKind::Port,
+                    port: Some(3000),
+                    info: Some(fake_port(3000, 42)),
+                }),
+                _ => None,
+            },
+            |_pid| vec![log_file("/app/out.log", LogFdKind::Stdout, "redirect", 1)],
+            |_path, _lines, _follow| {
+                Ok("ready\nerror: failed\nrequest /health\nerror: retried".to_string())
+            },
+            |_pid, _follow, _since| None,
+            |_cmd| unreachable!("system logs should not be used when a file exists"),
+        )
+        .expect("json logs should succeed");
+
+        assert_eq!(
+            result.payload.output.as_deref(),
+            Some("error: failed\nerror: retried")
+        );
+    }
+
+    #[test]
+    fn json_logs_passes_since_filter_to_system_log_command() {
+        let result = run_logs_json_with(
+            &args(&["logs", "3000", "--since", "2h"]),
+            |target| match target {
+                3000 => Some(KillTargetResolution {
+                    pid: 42,
+                    via: KillResolutionKind::Port,
+                    port: Some(3000),
+                    info: Some(fake_port(3000, 42)),
+                }),
+                _ => None,
+            },
+            |_pid| Vec::new(),
+            |_path, _lines, _follow| unreachable!("file logs should not be used"),
+            |_pid, _follow, _since| Some("system-log --since 2h".to_string()),
+            |cmd| {
+                assert_eq!(cmd, "system-log --since 2h");
+                Ok("system line".to_string())
+            },
+        )
+        .expect("system logs should succeed");
+
+        assert_eq!(result.payload.output.as_deref(), Some("system line"));
+        let source = result.payload.source.expect("system source should be present");
+        assert_eq!(source.command.as_deref(), Some("system-log --since 2h"));
+    }
+
+    #[test]
     fn json_logs_follow_mode_returns_error_instead_of_text_fallback() {
         let err = run_logs_json_with(
             &args(&["logs", "3000", "-f"]),
@@ -938,7 +1224,7 @@ mod tests {
             },
             |_pid| vec![log_file("/app/out.log", LogFdKind::Stdout, "redirect", 1)],
             |_path, _lines, _follow| unreachable!("follow mode should be rejected before reading"),
-            |_pid, _follow| unreachable!("system command should not be consulted"),
+            |_pid, _follow, _since| unreachable!("system command should not be consulted"),
             |_cmd| unreachable!("system command should not execute"),
         )
         .expect_err("follow mode should be rejected for json");
@@ -946,6 +1232,23 @@ mod tests {
         assert_eq!(err.exit_code, 1);
         assert!(err.message.contains("follow"));
         assert!(err.message.contains("--json"));
+        assert!(err.message.contains("--grep <pattern>"));
+    }
+
+    #[test]
+    fn json_logs_missing_flag_values_return_usage_error() {
+        let err = run_logs_json_with(
+            &args(&["logs", "3000", "--grep"]),
+            |_target| None,
+            |_pid| Vec::new(),
+            |_path, _lines, _follow| Ok(String::new()),
+            |_pid, _follow, _since| None,
+            |_cmd| Ok(String::new()),
+        )
+        .expect_err("missing grep value should fail");
+
+        assert_eq!(err.code, "usage");
+        assert_eq!(err.message, "missing value for --grep");
     }
 
     #[test]
@@ -957,7 +1260,7 @@ mod tests {
                 |_target| None,
                 |_pid| Vec::new(),
                 |_path, _lines, _follow| Ok(String::new()),
-                |_pid, _follow| None,
+                |_pid, _follow, _since| None,
                 |_cmd| Ok(String::new()),
             ),
         )
@@ -969,7 +1272,7 @@ mod tests {
                 |_target| None,
                 |_pid| Vec::new(),
                 |_path, _lines, _follow| Ok(String::new()),
-                |_pid, _follow| None,
+                |_pid, _follow, _since| None,
                 |_cmd| Ok(String::new()),
             ),
         )
@@ -981,7 +1284,7 @@ mod tests {
                 |_target| None,
                 |_pid| Vec::new(),
                 |_path, _lines, _follow| Ok(String::new()),
-                |_pid, _follow| None,
+                |_pid, _follow, _since| None,
                 |_cmd| Ok(String::new()),
             ),
         )
@@ -1006,7 +1309,7 @@ mod tests {
                     ]
                 },
                 |_path, _lines, _follow| Ok(String::new()),
-                |_pid, _follow| None,
+                |_pid, _follow, _since| None,
                 |_cmd| Ok(String::new()),
             ),
         )
@@ -1115,6 +1418,16 @@ mod tests {
         assert!(drain_user_warnings().is_empty());
     }
 
+    #[test]
+    fn log_header_uses_ascii_safe_marker() {
+        let _guard = crate::style::glyph_test_lock().lock().unwrap();
+        crate::style::set_force_ascii(true);
+        let header = log_header_lines(":3000", 42, "node");
+        crate::style::set_force_ascii(false);
+
+        assert!(header[0].contains("->"), "expected ascii-safe header marker: {}", header[0]);
+    }
+
     fn fake_port(port: u16, pid: u32) -> PortInfo {
         PortInfo {
             port,
@@ -1144,28 +1457,45 @@ mod tests {
     }
 }
 
-fn tail_file(path: &Path, lines: &str, follow: bool) -> i32 {
-    let status = match build_tail_command(path, lines, follow) {
-        TailCommand::PowerShell { command } => Command::new("powershell")
-            .args(["-Command", &command])
-            .stdin(Stdio::inherit())
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .status(),
-        TailCommand::Argv(argv) => {
-            let mut cmd = Command::new(&argv[0]);
-            cmd.args(&argv[1..])
-                .stdin(Stdio::inherit())
-                .stdout(Stdio::inherit())
-                .stderr(Stdio::inherit())
-                .status()
+fn tail_file(path: &Path, lines: &str, follow: bool, grep: Option<&str>) -> i32 {
+    if !follow {
+        match read_log_output(path, lines, false) {
+            Ok(output) => {
+                let filtered = apply_grep_filter(output, grep);
+                if !filtered.is_empty() {
+                    println!("{filtered}");
+                }
+                return 0;
+            }
+            Err(_) => return 1,
         }
-    };
-    if status.map(|s| s.success()).unwrap_or(false) {
-        0
-    } else {
-        1
     }
+
+    return run_shell(&tail_follow_shell_command(path, lines, grep));
+}
+
+fn tail_follow_shell_command(path: &Path, lines: &str, grep: Option<&str>) -> String {
+    let command = match build_tail_command(path, lines, true) {
+        TailCommand::PowerShell { command } => format!("powershell -Command {command:?}"),
+        TailCommand::Argv(argv) => shell_quote_argv(&argv),
+    };
+    apply_grep_to_shell_command(&command, grep)
+}
+
+fn shell_quote_argv(argv: &[String]) -> String {
+    argv.iter()
+        .map(|arg| {
+            if arg
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '/' | '.' | '_' | '-'))
+            {
+                arg.clone()
+            } else {
+                format!("'{}'", arg.replace('\'', r#"'\''"#))
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn read_log_output(path: &Path, lines: &str, follow: bool) -> Result<String, String> {

@@ -1,3 +1,4 @@
+pub mod check;
 pub mod cli;
 mod cli_args;
 pub mod display;
@@ -8,6 +9,7 @@ pub mod json_output;
 pub mod kill;
 pub mod logs;
 pub mod model;
+pub mod open;
 pub mod platform;
 pub mod ports;
 pub mod process;

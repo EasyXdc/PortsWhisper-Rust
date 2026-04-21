@@ -6,6 +6,8 @@ use clap_complete::Shell;
 pub struct ParsedCliArgs {
     pub binary_name: String,
     pub show_all: bool,
+    pub quiet: bool,
+    pub ascii: bool,
     pub verbose: bool,
     pub json: bool,
     pub completion_shell: Option<Shell>,
@@ -17,6 +19,10 @@ pub struct ParsedCliArgs {
 struct GlobalFlags {
     #[arg(short = 'a', long = "all")]
     show_all: bool,
+    #[arg(long = "quiet")]
+    quiet: bool,
+    #[arg(long = "ascii")]
+    ascii: bool,
     #[arg(long = "verbose")]
     verbose: bool,
     #[arg(long = "json")]
@@ -26,12 +32,21 @@ struct GlobalFlags {
 pub fn parse(binary_name: &str, args: &[String]) -> Result<ParsedCliArgs, clap::Error> {
     let mut flag_args = vec![binary_name.to_string()];
     let mut remaining_args = Vec::new();
+    let mut kill_targets_started = false;
 
-    for arg in args {
-        if is_global_flag(arg) {
+    for (index, arg) in args.iter().enumerate() {
+        if is_global_flag(arg) && !is_kill_display_target(args, index, arg, kill_targets_started) {
             flag_args.push(arg.clone());
         } else {
             remaining_args.push(arg.clone());
+        }
+
+        if matches!(args.first().map(String::as_str), Some("kill"))
+            && index > 0
+            && !is_kill_option_with_value(args, index)
+            && !matches!(arg.as_str(), "-f" | "--force" | "--signal")
+        {
+            kill_targets_started = true;
         }
     }
 
@@ -43,6 +58,8 @@ pub fn parse(binary_name: &str, args: &[String]) -> Result<ParsedCliArgs, clap::
     Ok(ParsedCliArgs {
         binary_name: binary_name.to_string(),
         show_all: flags.show_all,
+        quiet: flags.quiet,
+        ascii: flags.ascii,
         verbose: flags.verbose,
         json: flags.json,
         completion_shell,
@@ -75,6 +92,18 @@ pub fn command(binary_name: &str) -> Command {
                 .action(ArgAction::SetTrue),
         )
         .arg(
+            Arg::new("quiet")
+                .long("quiet")
+                .global(true)
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("ascii")
+                .long("ascii")
+                .global(true)
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
             Arg::new("json")
                 .long("json")
                 .global(true)
@@ -82,10 +111,26 @@ pub fn command(binary_name: &str) -> Command {
         )
         .subcommand(Command::new("help"))
         .subcommand(Command::new("ps").args(query_filter_args()))
+        .subcommand(
+            Command::new("check").arg(
+                Arg::new("ports")
+                    .required(true)
+                    .num_args(1..)
+                    .value_parser(clap::value_parser!(u16)),
+            ),
+        )
+        .subcommand(
+            Command::new("open").arg(
+                Arg::new("port")
+                    .required(true)
+                    .value_parser(clap::value_parser!(u16)),
+            ),
+        )
         .subcommand(Command::new("clean"))
         .subcommand(
             Command::new("kill")
                 .arg(Arg::new("force").short('f').long("force").action(ArgAction::SetTrue))
+                .arg(Arg::new("signal").long("signal").num_args(1))
                 .arg(Arg::new("target").num_args(0..).allow_hyphen_values(true)),
         )
         .subcommand(
@@ -93,6 +138,8 @@ pub fn command(binary_name: &str) -> Command {
                 .arg(Arg::new("target"))
                 .arg(Arg::new("follow").short('f').long("follow").action(ArgAction::SetTrue))
                 .arg(Arg::new("lines").long("lines").num_args(1))
+                .arg(Arg::new("grep").long("grep").num_args(1))
+                .arg(Arg::new("since").long("since").num_args(1))
                 .arg(Arg::new("err").long("err").action(ArgAction::SetTrue)),
         )
         .subcommand(Command::new("watch"))
@@ -144,19 +191,31 @@ fn parse_strict_clap_contract(binary_name: &str, args: &[String]) -> Result<(), 
 
 fn should_validate_with_clap(args: &[String]) -> bool {
     match args.first().map(String::as_str) {
-        Some("help" | "clean" | "watch" | "completion") => true,
+        Some("help" | "clean" | "watch" | "completion" | "check" | "open") => true,
         Some("ps") => {
             args.iter().skip(1).any(|arg| {
                 arg == "--help" || arg == "-h" || !is_query_filter_flag(arg)
             })
         }
-        Some("kill" | "logs") => args.iter().any(|arg| arg == "--help" || arg == "-h"),
+        Some("kill") => args.iter().any(|arg| arg == "--help" || arg == "-h"),
+        Some("logs") => true,
         _ => args.iter().any(|arg| arg == "--help" || arg == "-h"),
     }
 }
 
 fn is_global_flag(arg: &str) -> bool {
-    matches!(arg, "--all" | "-a" | "--verbose" | "--json")
+    matches!(arg, "--all" | "-a" | "--quiet" | "--ascii" | "--verbose" | "--json")
+}
+
+fn is_kill_display_target(args: &[String], index: usize, arg: &str, kill_targets_started: bool) -> bool {
+    matches!(arg, "--quiet" | "--ascii")
+        && matches!(args.first().map(String::as_str), Some("kill"))
+        && index > 0
+        && kill_targets_started
+}
+
+fn is_kill_option_with_value(args: &[String], index: usize) -> bool {
+    matches!(args.get(index.wrapping_sub(1)).map(String::as_str), Some("--signal"))
 }
 
 fn validate_query_inputs(args: &[String]) -> Result<(), clap::Error> {
@@ -219,7 +278,7 @@ fn validate_query_inputs(args: &[String]) -> Result<(), clap::Error> {
 fn is_query_command_context(args: &[String]) -> bool {
     match args.first().map(String::as_str) {
         None => true,
-        Some("help" | "--help" | "-h" | "clean" | "kill" | "logs" | "watch" | "completion") => false,
+        Some("help" | "--help" | "-h" | "clean" | "kill" | "logs" | "watch" | "completion" | "check" | "open") => false,
         Some("ps") => true,
         Some(arg) => is_query_filter_flag(arg) || looks_like_port_range(arg) || arg.parse::<u32>().is_ok(),
     }
@@ -271,15 +330,17 @@ mod tests {
     #[test]
     fn parses_global_flags_without_consuming_command_arguments() {
         assert_eq!(
-            parse("ports", &args(&["--json", "logs", "3000", "--lines=5", "-f"]))
+            parse("ports", &args(&["--json", "logs", "3000", "--lines=5", "-f", "--grep", "error", "--since", "5m"]))
                 .expect("global flags should parse"),
             ParsedCliArgs {
                 binary_name: "ports".to_string(),
                 show_all: false,
+                quiet: false,
+                ascii: false,
                 verbose: false,
                 json: true,
                 completion_shell: None,
-                remaining_args: args(&["logs", "3000", "--lines=5", "-f"]),
+                remaining_args: args(&["logs", "3000", "--lines=5", "-f", "--grep", "error", "--since", "5m"]),
             }
         );
     }
@@ -302,6 +363,8 @@ mod tests {
             ParsedCliArgs {
                 binary_name: "ports".to_string(),
                 show_all: false,
+                quiet: false,
+                ascii: false,
                 verbose: false,
                 json: false,
                 completion_shell: None,
@@ -325,10 +388,66 @@ mod tests {
             ParsedCliArgs {
                 binary_name: "ports".to_string(),
                 show_all: false,
+                quiet: false,
+                ascii: false,
                 verbose: false,
                 json: false,
                 completion_shell: None,
                 remaining_args: args(&["3000-3010", "--framework", "nextjs"]),
+            }
+        );
+    }
+
+    #[test]
+    fn parses_quiet_and_ascii_as_shared_global_flags() {
+        assert_eq!(
+            parse("ports", &args(&["ps", "--quiet", "--ascii"]))
+                .expect("shared display flags should parse"),
+            ParsedCliArgs {
+                binary_name: "ports".to_string(),
+                show_all: false,
+                quiet: true,
+                ascii: true,
+                verbose: false,
+                json: false,
+                completion_shell: None,
+                remaining_args: args(&["ps"]),
+            }
+        );
+    }
+
+    #[test]
+    fn preserves_hyphenated_kill_targets_that_match_global_flag_names() {
+        assert_eq!(
+            parse("ports", &args(&["kill", "3000", "--ascii"]))
+                .expect("kill targets should be preserved"),
+            ParsedCliArgs {
+                binary_name: "ports".to_string(),
+                show_all: false,
+                quiet: false,
+                ascii: false,
+                verbose: false,
+                json: false,
+                completion_shell: None,
+                remaining_args: args(&["kill", "3000", "--ascii"]),
+            }
+        );
+    }
+
+    #[test]
+    fn parses_kill_display_flags_as_global_before_targets_begin() {
+        assert_eq!(
+            parse("ports", &args(&["kill", "--quiet", "3000", "--ascii"]))
+                .expect("leading kill display flags should stay global"),
+            ParsedCliArgs {
+                binary_name: "ports".to_string(),
+                show_all: false,
+                quiet: true,
+                ascii: false,
+                verbose: false,
+                json: false,
+                completion_shell: None,
+                remaining_args: args(&["kill", "3000", "--ascii"]),
             }
         );
     }
@@ -364,6 +483,14 @@ mod tests {
     }
 
     #[test]
+    fn rejects_logs_flags_without_required_values() {
+        for argv in [args(&["logs", "3000", "--grep"]), args(&["logs", "3000", "--since"])] {
+            let error = parse("ports", &argv).expect_err("missing logs option values should fail clap validation");
+            assert_eq!(error.kind(), clap::error::ErrorKind::InvalidValue);
+        }
+    }
+
+    #[test]
     fn preserves_active_binary_name_for_alias_help_output() {
         let error = parse("whoisonport", &args(&["--help"]))
             .expect_err("help should be rendered by clap");
@@ -371,6 +498,15 @@ mod tests {
         let rendered = error.render().to_string();
         assert!(rendered.contains("Usage: whoisonport"), "unexpected help: {rendered}");
         assert!(!rendered.contains("Usage: ports"), "unexpected help: {rendered}");
+    }
+
+    #[test]
+    fn kill_help_lists_signal_selection_option() {
+        let error = parse("ports", &args(&["kill", "--help"]))
+            .expect_err("kill help should be rendered by clap");
+
+        let rendered = error.render().to_string();
+        assert!(rendered.contains("--signal"), "unexpected help: {rendered}");
     }
 
     #[test]

@@ -40,9 +40,9 @@ pub(crate) enum WatchEvent {
     Removed(PortInfo),
 }
 
-pub fn run_watch() -> i32 {
+pub fn run_watch(display_config: display::DisplayConfig) -> i32 {
     install_sigint_handler();
-    display::display_watch_header();
+    display::display_watch_header_with_config(&display_config);
     run_watch_loop(
         stop_requested,
         |previous, docker_cache| {

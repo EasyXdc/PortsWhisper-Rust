@@ -2,6 +2,8 @@ use crate::error::PortError;
 use crate::model::{LogFile, ProcessTreeNode, RawPortEntry, RawProcessDetails, RawProcessEntry};
 #[cfg(target_os = "linux")]
 use crate::util::command_exists;
+#[cfg(unix)]
+use crate::util::run_output_with_c_locale;
 use crate::util::{basename, run_output};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -357,13 +359,65 @@ fn linux_pid_socket_inodes(pid: u32) -> Option<Vec<(u64, String)>> {
 
 #[cfg(target_os = "windows")]
 fn windows_listening_ports_raw() -> Vec<RawPortEntry> {
-    let raw = run_output(
+    let raw = degrade_command_output(run_output(
+        "powershell",
+        [
+            "-NoProfile",
+            "-Command",
+            "Get-NetTCPConnection -State Listen | Sort-Object LocalPort | ForEach-Object { $name = (Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue).ProcessName; if ($name) { \"{0} {1} {2}\" -f $_.LocalPort, $_.OwningProcess, $name } else { \"{0} {1}\" -f $_.LocalPort, $_.OwningProcess } }",
+        ],
+        Some(Duration::from_millis(10_000)),
+    ));
+    let entries = windows_powershell_listening_ports_from_output(raw);
+    if !entries.is_empty() {
+        return entries;
+    }
+
+    let raw = degrade_command_output(run_output(
         "netstat",
         ["-ano", "-p", "TCP"],
         Some(Duration::from_millis(10_000)),
-    )
-    .ok()
-    .unwrap_or_default();
+    ));
+    windows_netstat_listening_ports_from_output(raw)
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn windows_powershell_listening_ports_from_output(raw: String) -> Vec<RawPortEntry> {
+    let mut entries = Vec::new();
+    let mut seen = HashMap::new();
+    for line in raw.lines() {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() < 2 {
+            continue;
+        }
+        let Ok(port) = parts[0].parse::<u16>() else {
+            continue;
+        };
+        if seen.contains_key(&port) {
+            continue;
+        }
+        let Ok(pid) = parts[1].parse::<u32>() else {
+            continue;
+        };
+        if pid == 0 {
+            continue;
+        }
+        seen.insert(port, true);
+        entries.push(RawPortEntry {
+            port,
+            pid,
+            process_name: if parts.len() > 2 {
+                parts[2..].join(" ")
+            } else {
+                "unknown".to_string()
+            },
+        });
+    }
+    entries
+}
+
+#[cfg(target_os = "windows")]
+fn windows_netstat_listening_ports_from_output(raw: String) -> Vec<RawPortEntry> {
     let mut entries = Vec::new();
     let mut seen = HashMap::new();
     for line in raw.lines().filter(|l| l.contains("LISTENING")) {
@@ -402,7 +456,7 @@ fn unix_batch_process_info(pids: &[u32]) -> HashMap<u32, RawProcessDetails> {
         .map(u32::to_string)
         .collect::<Vec<_>>()
         .join(",");
-    let result = run_output(
+    let result = run_output_with_c_locale(
         "ps",
         [
             "-p",
@@ -453,7 +507,7 @@ where
 }
 
 fn unix_process_details(pid: u32) -> Option<RawProcessDetails> {
-    unix_process_details_from_result(run_output(
+    unix_process_details_from_result(run_output_with_c_locale(
         "ps",
         [
             "-p",
@@ -568,7 +622,7 @@ fn windows_batch_cwd(pids: &[u32]) -> HashMap<u32, PathBuf> {
 }
 
 fn unix_all_processes_raw() -> Vec<RawProcessEntry> {
-    let raw = degrade_command_output(run_output(
+    let raw = degrade_command_output(run_output_with_c_locale(
         "ps",
         ["-eo", "pid=,pcpu=,pmem=,rss=,lstart=,command="],
         Some(Duration::from_millis(5000)),
@@ -618,7 +672,7 @@ fn windows_all_processes_raw() -> Vec<RawProcessEntry> {
 
 fn unix_process_tree(pid: u32) -> Vec<ProcessTreeNode> {
     unix_process_tree_with(pid, |target_pid| {
-        run_output(
+        run_output_with_c_locale(
             "ps",
             ["-p", &target_pid.to_string(), "-o", "pid=,ppid=,comm="],
             Some(Duration::from_millis(5000)),
@@ -772,16 +826,26 @@ where
 
 #[cfg(target_os = "windows")]
 fn windows_process_name(pid: u32) -> Option<String> {
-    let out = run_output(
-        "powershell",
-        [
-            "-NoProfile",
-            "-Command",
-            &format!("(Get-Process -Id {pid} -ErrorAction SilentlyContinue).ProcessName"),
-        ],
-        Some(Duration::from_millis(3000)),
-    )
-    .ok()?;
+    windows_process_name_with(pid, |target_pid| {
+        run_output(
+            "powershell",
+            [
+                "-NoProfile",
+                "-Command",
+                &format!("(Get-Process -Id {target_pid} -ErrorAction SilentlyContinue).ProcessName"),
+            ],
+            Some(Duration::from_millis(3000)),
+        )
+        .ok()
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn windows_process_name_with<Lookup>(pid: u32, lookup: Lookup) -> Option<String>
+where
+    Lookup: Fn(u32) -> Option<String>,
+{
+    let out = lookup(pid)?;
     if out.is_empty() {
         None
     } else {
@@ -833,6 +897,7 @@ fn unix_pid_exists(pid: u32) -> bool {
 mod tests {
     #[cfg(target_os = "linux")]
     use super::unix_batch_process_info_with;
+    use super::windows_powershell_listening_ports_from_output;
     #[cfg(target_os = "windows")]
     use super::windows_process_name_with;
     use super::{darwin_listening_ports_from_result, unix_process_details_from_result};
@@ -973,5 +1038,20 @@ mod tests {
     fn inaccessible_windows_process_returns_none_instead_of_crashing() {
         let name = windows_process_name_with(42, |_| None);
         assert_eq!(name, None);
+    }
+
+    #[test]
+    fn windows_powershell_listener_output_prefers_first_pid_per_port() {
+        let raw = "3000 42 node\n3000 99 duplicate\n8080 7\ninvalid line\n9090 0 system\n";
+
+        let entries = windows_powershell_listening_ports_from_output(raw.to_string());
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].port, 3000);
+        assert_eq!(entries[0].pid, 42);
+        assert_eq!(entries[0].process_name, "node");
+        assert_eq!(entries[1].port, 8080);
+        assert_eq!(entries[1].pid, 7);
+        assert_eq!(entries[1].process_name, "unknown");
     }
 }

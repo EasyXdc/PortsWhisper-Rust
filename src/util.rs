@@ -21,6 +21,20 @@ where
     run_output_with_user_warnings(program, args, timeout, true)
 }
 
+#[cfg(unix)]
+pub fn run_output_with_c_locale<S, I, A>(
+    program: S,
+    args: I,
+    timeout: Option<Duration>,
+) -> Result<String, PortError>
+where
+    S: AsRef<OsStr>,
+    I: IntoIterator<Item = A>,
+    A: AsRef<OsStr>,
+{
+    run_output_with_env(program, args, timeout, true, [("LANG", "C"), ("LC_ALL", "C")])
+}
+
 fn run_output_silent_probe<S, I, A>(
     program: S,
     args: I,
@@ -34,6 +48,40 @@ where
     run_output_with_user_warnings(program, args, timeout, false)
 }
 
+fn run_output_with_env<S, I, A, K, V, E>(
+    program: S,
+    args: I,
+    timeout: Option<Duration>,
+    record_warning: bool,
+    envs: E,
+) -> Result<String, PortError>
+where
+    S: AsRef<OsStr>,
+    I: IntoIterator<Item = A>,
+    A: AsRef<OsStr>,
+    K: AsRef<OsStr>,
+    V: AsRef<OsStr>,
+    E: IntoIterator<Item = (K, V)>,
+{
+    let program = program.as_ref().to_os_string();
+    let args: Vec<std::ffi::OsString> = args
+        .into_iter()
+        .map(|a| a.as_ref().to_os_string())
+        .collect();
+    let envs: Vec<(std::ffi::OsString, std::ffi::OsString)> = envs
+        .into_iter()
+        .map(|(key, value)| (key.as_ref().to_os_string(), value.as_ref().to_os_string()))
+        .collect();
+    let result = run_output_impl(program, args, timeout, &envs);
+    if let Err(ref e) = result {
+        verbose_log_port_error(e);
+        if record_warning {
+            record_user_warning(e);
+        }
+    }
+    result
+}
+
 fn run_output_with_user_warnings<S, I, A>(
     program: S,
     args: I,
@@ -45,34 +93,35 @@ where
     I: IntoIterator<Item = A>,
     A: AsRef<OsStr>,
 {
-    let program = program.as_ref().to_os_string();
-    let args: Vec<std::ffi::OsString> = args
-        .into_iter()
-        .map(|a| a.as_ref().to_os_string())
-        .collect();
-    let result = run_output_impl(program, args, timeout);
-    if let Err(ref e) = result {
-        verbose_log_port_error(e);
-        if record_warning {
-            record_user_warning(e);
-        }
-    }
-    result
+    run_output_with_env(
+        program,
+        args,
+        timeout,
+        record_warning,
+        std::iter::empty::<(&str, &str)>(),
+    )
 }
 
 fn run_output_impl(
     program: std::ffi::OsString,
     args: Vec<std::ffi::OsString>,
     timeout: Option<Duration>,
+    envs: &[(std::ffi::OsString, std::ffi::OsString)],
 ) -> Result<String, PortError> {
     let cmd_str = format_cmd(&program, &args);
     let program_name = program.to_string_lossy().to_string();
 
-    let mut child = Command::new(&program)
+    let mut command = Command::new(&program);
+    command
         .args(&args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    for (key, value) in envs {
+        command.env(key, value);
+    }
+
+    let mut child = command
         .spawn()
         .map_err(|e| classify_spawn_error(e, &program_name))?;
 
@@ -347,6 +396,19 @@ mod tests {
     fn truncation_uses_visible_width_for_wide_unicode() {
         assert_eq!(truncate_visible("表表表A", 5), "表表…");
         assert_eq!(truncate_visible("表A", 3), "表A");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_ps_commands_are_wrapped_with_lang_c() {
+        let out = run_output_with_c_locale(
+            "sh",
+            ["-c", "printf '%s/%s' \"$LANG\" \"$LC_ALL\""],
+            None,
+        )
+        .expect("should succeed");
+
+        assert_eq!(out, "C/C");
     }
 
     #[cfg(unix)]

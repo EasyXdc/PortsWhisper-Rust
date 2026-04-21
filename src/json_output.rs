@@ -126,6 +126,18 @@ pub struct HelpPayload {
 }
 
 #[derive(Debug, Serialize, Eq, PartialEq)]
+pub struct CheckPayload {
+    pub ports: Vec<CheckPortPayload>,
+}
+
+#[derive(Debug, Serialize, Eq, PartialEq)]
+pub struct CheckPortPayload {
+    pub port: u16,
+    pub available: bool,
+    pub occupied: bool,
+}
+
+#[derive(Debug, Serialize, Eq, PartialEq)]
 pub struct WatchLinePayload {
     pub r#type: String,
     pub action: Option<String>,
@@ -261,6 +273,12 @@ pub fn help_payload(usage: &[String]) -> HelpPayload {
     }
 }
 
+pub fn check_payload(results: &[crate::check::PortCheckResult]) -> CheckPayload {
+    CheckPayload {
+        ports: results.iter().map(CheckPortPayload::from).collect(),
+    }
+}
+
 pub fn watch_warning_payload(message: impl Into<String>) -> WatchLinePayload {
     WatchLinePayload {
         r#type: "warning".to_string(),
@@ -348,6 +366,16 @@ impl From<&crate::model::ProcessTreeNode> for ProcessTreeNodePayload {
     }
 }
 
+impl From<&crate::check::PortCheckResult> for CheckPortPayload {
+    fn from(result: &crate::check::PortCheckResult) -> Self {
+        Self {
+            port: result.port,
+            available: result.available,
+            occupied: result.occupied,
+        }
+    }
+}
+
 fn path_to_string(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
@@ -355,8 +383,9 @@ fn path_to_string(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        CommandEnvelope, KillTargetPayload, LogSourcePayload, clean_payload, detail_payload,
-        kill_payload, list_payload, logs_payload, process_list_payload, render_json,
+        CommandEnvelope, KillTargetPayload, LogSourcePayload, check_payload, clean_payload,
+        detail_payload, kill_payload, list_payload, logs_payload, process_list_payload,
+        render_json,
     };
     use crate::model::{DisplayTime, PortInfo, ProcessInfo, ProcessStatus, ProcessTreeNode};
     use serde_json::json;
@@ -668,6 +697,49 @@ mod tests {
                         "command": null
                     },
                     "output": "ready\nrequest /health"
+                },
+                "error": null
+            })
+        );
+    }
+
+    #[test]
+    fn serializes_check_payload_with_port_availability() {
+        let rendered = render_json(&CommandEnvelope::ok(
+            "ports check",
+            check_payload(&[
+                crate::check::PortCheckResult {
+                    port: 3000,
+                    available: false,
+                    occupied: true,
+                },
+                crate::check::PortCheckResult {
+                    port: 5173,
+                    available: true,
+                    occupied: false,
+                },
+            ]),
+        ))
+        .expect("json render should succeed");
+
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&rendered).expect("json should parse"),
+            json!({
+                "command": "ports check",
+                "ok": true,
+                "data": {
+                    "ports": [
+                        {
+                            "port": 3000,
+                            "available": false,
+                            "occupied": true
+                        },
+                        {
+                            "port": 5173,
+                            "available": true,
+                            "occupied": false
+                        }
+                    ]
                 },
                 "error": null
             })
