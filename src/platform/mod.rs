@@ -122,7 +122,7 @@ impl PlatformScanner for UnsupportedScanner {
     }
 }
 
-#[cfg(any(test, target_os = "macos"))]
+#[cfg(target_os = "macos")]
 fn darwin_listening_ports_raw() -> Vec<RawPortEntry> {
     darwin_listening_ports_from_result(run_output(
         "lsof",
@@ -752,7 +752,7 @@ fn parse_unix_ps_details(line: &str) -> Option<(u32, RawProcessDetails)> {
 
 #[cfg(target_os = "linux")]
 fn linux_proc_name(pid: u32) -> String {
-    linux_proc_name_with(pid, |path| std::fs::read_to_string(path))
+    linux_proc_name_with(pid, std::fs::read_to_string)
 }
 
 #[cfg(target_os = "linux")]
