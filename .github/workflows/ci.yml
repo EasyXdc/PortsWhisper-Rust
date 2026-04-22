@@ -65,7 +65,7 @@ jobs:
       - name: Verify packaged install path
         shell: bash
         run: |
-          PACKAGE_TGZ=$(node -p "const pkg = require('./package.json'); `${pkg.name}-${pkg.version}.tgz`")
+          PACKAGE_TGZ=$(node -p "const pkg = require('./package.json'); pkg.name + '-' + pkg.version + '.tgz'")
           TMP_DIR=$(mktemp -d)
           EXT=$(node -p "process.platform === 'win32' ? '.exe' : ''")
           npm install --prefix "$TMP_DIR" "./$PACKAGE_TGZ"
