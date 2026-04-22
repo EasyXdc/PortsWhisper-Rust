@@ -92,8 +92,22 @@ function extractTarGz(archivePath) {
   }
 }
 
+function buildZipExtractCommand(archivePath, destinationDir) {
+  const normalizedArchivePath = archivePath.replace(/\\/g, "/").replace(/'/g, "''");
+  const normalizedDestinationDir = destinationDir.replace(/\\/g, "/").replace(/'/g, "''");
+  return {
+    command: "powershell",
+    args: [
+      "-NoProfile",
+      "-Command",
+      `Expand-Archive -Path '${normalizedArchivePath}' -DestinationPath '${normalizedDestinationDir}' -Force`,
+    ],
+  };
+}
+
 function extractZip(archivePath) {
-  const result = spawnSync("unzip", ["-o", archivePath, "-d", VENDOR_DIR], { stdio: "inherit" });
+  const command = buildZipExtractCommand(archivePath, VENDOR_DIR);
+  const result = spawnSync(command.command, command.args, { stdio: "inherit" });
   if (result.status !== 0) {
     fail(`failed to extract zip archive ${path.basename(archivePath)}`);
   }
@@ -152,6 +166,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  buildZipExtractCommand,
   defaultBaseUrl,
   defaultReleaseTag,
   packageVersion,
