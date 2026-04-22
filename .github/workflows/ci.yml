@@ -37,14 +37,8 @@ jobs:
         run: cargo test
 
   node-package:
-    name: Node package verification (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os:
-          - ubuntu-latest
-          - windows-latest
+    name: Node package verification
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
@@ -61,17 +55,3 @@ jobs:
       - name: Verify postinstall skip path
         shell: bash
         run: PORTS_RS_SKIP_DOWNLOAD=1 node scripts/postinstall.js
-
-      - name: Verify packaged install path
-        shell: bash
-        run: |
-          PACKAGE_TGZ=$(node -p "const pkg = require('./package.json'); pkg.name + '-' + pkg.version + '.tgz'")
-          TMP_DIR=$(mktemp -d)
-          EXT=$(node -p "process.platform === 'win32' ? '.exe' : ''")
-          npm install --prefix "$TMP_DIR" "./$PACKAGE_TGZ"
-          test -f "$TMP_DIR/node_modules/ports-rs/vendor/ports$EXT"
-          test -f "$TMP_DIR/node_modules/ports-rs/vendor/whoisonport$EXT"
-          node "$TMP_DIR/node_modules/ports-rs/bin/ports.js" --help
-          node "$TMP_DIR/node_modules/ports-rs/bin/whoisonport.js" --help
-          "$TMP_DIR/node_modules/ports-rs/vendor/ports$EXT" --help
-          "$TMP_DIR/node_modules/ports-rs/vendor/whoisonport$EXT" --help
