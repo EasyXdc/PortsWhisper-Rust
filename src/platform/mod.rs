@@ -7,7 +7,7 @@ use crate::util::run_output;
 use crate::util::{basename, run_output_with_c_locale};
 use std::collections::HashMap;
 use std::path::PathBuf;
-#[cfg(unix)]
+#[cfg(any(unix, target_os = "windows"))]
 use std::process::Command;
 use std::time::Duration;
 
