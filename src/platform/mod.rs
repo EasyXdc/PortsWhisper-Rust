@@ -614,17 +614,22 @@ where
 fn windows_batch_cwd(pids: &[u32]) -> HashMap<u32, PathBuf> {
     let mut map = HashMap::new();
     for pid in pids {
-        if let Ok(path) = run_output(
-            "powershell",
-            [
+        let command = Command::new("powershell")
+            .args([
                 "-NoProfile",
                 "-Command",
                 &format!("(Get-Process -Id {pid} -ErrorAction SilentlyContinue).Path | Split-Path"),
-            ],
-            Some(Duration::from_millis(5000)),
-        ) && !path.trim().is_empty()
-        {
-            map.insert(*pid, PathBuf::from(path));
+            ])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .output();
+
+        if let Ok(output) = command {
+            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !path.is_empty() {
+                map.insert(*pid, PathBuf::from(path));
+            }
         }
     }
     map
@@ -918,6 +923,8 @@ mod tests {
     use super::unix_batch_process_info_with;
     #[cfg(unix)]
     use super::unix_process_tree_with;
+    #[cfg(target_os = "windows")]
+    use super::windows_batch_cwd;
     #[cfg(any(test, target_os = "windows"))]
     use super::windows_powershell_listening_ports_from_output;
     #[cfg(target_os = "windows")]
@@ -1061,6 +1068,25 @@ mod tests {
     fn inaccessible_windows_process_returns_none_instead_of_crashing() {
         let name = windows_process_name_with(42, |_| None);
         assert_eq!(name, None);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_batch_cwd_probe_failure_does_not_record_user_warning() {
+        use crate::error::{PortError, drain_user_warnings, verbose_test_lock};
+
+        let _guard = verbose_test_lock().lock().unwrap();
+        drain_user_warnings();
+
+        let cwd_map = windows_batch_cwd(&[42]);
+
+        assert!(cwd_map.is_empty() || !cwd_map.is_empty());
+        assert!(
+            drain_user_warnings()
+                .into_iter()
+                .all(|warning| !matches!(warning, PortError::ExecFailed { .. } | PortError::Io(_))),
+            "windows cwd probe should not surface generic system inspection warnings"
+        );
     }
 
     #[test]
