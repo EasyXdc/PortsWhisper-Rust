@@ -141,16 +141,10 @@ where
             None => None,
         };
         (
-            ps_task
-                .join()
-                .unwrap_or_default(),
-            cwd_task
-                .join()
-                .unwrap_or_default(),
+            ps_task.join().unwrap_or_default(),
+            cwd_task.join().unwrap_or_default(),
             match docker_task {
-                Some(task) => task
-                    .join()
-                    .unwrap_or_default(),
+                Some(task) => task.join().unwrap_or_default(),
                 None => Default::default(),
             },
         )

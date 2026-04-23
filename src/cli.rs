@@ -472,7 +472,11 @@ fn run_port_detail(
     }
     .filter(|info| matches_port_filters(info, filters));
     if json {
-        return json_output::print_json_output(render_port_detail_json(port, info.as_ref(), filters));
+        return json_output::print_json_output(render_port_detail_json(
+            port,
+            info.as_ref(),
+            filters,
+        ));
     }
     display::display_port_detail_with_config(info.as_ref(), display_config);
     print_warning_lines(&error::drain_user_warnings());

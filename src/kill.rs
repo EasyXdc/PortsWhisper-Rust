@@ -127,9 +127,8 @@ pub fn run_kill(args: &[String]) -> i32 {
 pub fn run_kill_json(args: &[String]) -> i32 {
     let result = run_kill_json_with(args, scanner::resolve_kill_target, kill_process);
     let exit_code = result.exit_code;
-    let json_exit = json_output::print_json_output(
-        json_output::render_json(&kill_json_envelope(args, result))
-    );
+    let json_exit =
+        json_output::print_json_output(json_output::render_json(&kill_json_envelope(args, result)));
     if json_exit != 0 { json_exit } else { exit_code }
 }
 

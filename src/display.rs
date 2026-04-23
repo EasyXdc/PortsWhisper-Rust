@@ -831,7 +831,9 @@ fn terminal_width_from_env() -> Option<usize> {
 }
 
 fn current_time_label() -> String {
-    let duration = std::time::SystemTime::UNIX_EPOCH.elapsed().unwrap_or_default();
+    let duration = std::time::SystemTime::UNIX_EPOCH
+        .elapsed()
+        .unwrap_or_default();
     let total_secs = duration.as_secs();
     let hours = (total_secs / 3600) % 24;
     let minutes = (total_secs / 60) % 60;
