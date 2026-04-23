@@ -45,10 +45,6 @@ impl Default for DisplayConfig {
     }
 }
 
-pub fn render_header() {
-    print!("{}", render_header_with_config(&DisplayConfig::default()));
-}
-
 pub fn render_header_with_config(config: &DisplayConfig) -> String {
     if !config.decorative_header {
         return String::new();
@@ -136,10 +132,6 @@ fn render_slow_command_status_line(config: &DisplayConfig, header_width: usize) 
 
 fn stdout_is_terminal() -> bool {
     std::io::stdout().is_terminal()
-}
-
-pub fn display_port_table(ports: &[PortInfo], filtered: bool) {
-    display_port_table_with_config(ports, filtered, &DisplayConfig::default());
 }
 
 pub fn display_port_table_with_config(ports: &[PortInfo], filtered: bool, config: &DisplayConfig) {
@@ -251,10 +243,6 @@ fn port_summary_line(count: usize, filtered: bool) -> String {
         style::cyan("ports <number>"),
         style::gray(" for details") + &all_hint
     )
-}
-
-pub fn display_process_table(processes: &[ProcessInfo], filtered: bool) {
-    display_process_table_with_config(processes, filtered, &DisplayConfig::default());
 }
 
 pub fn display_process_table_with_config(
@@ -379,10 +367,6 @@ fn process_table_rows_plain(processes: &[ProcessInfo]) -> Vec<Vec<String>> {
         .collect()
 }
 
-pub fn display_port_detail(info: Option<&PortInfo>) {
-    display_port_detail_with_config(info, &DisplayConfig::default());
-}
-
 pub fn display_port_detail_with_config(info: Option<&PortInfo>, config: &DisplayConfig) {
     print!("{}", render_header_with_config(config));
     print!("{}", render_port_detail_body(info));
@@ -501,10 +485,6 @@ fn render_port_detail_body(info: Option<&PortInfo>) -> String {
     out
 }
 
-pub fn display_clean_results(orphaned: &[PortInfo], killed: &[u32], failed: &[u32]) {
-    display_clean_results_with_config(orphaned, killed, failed, &DisplayConfig::default());
-}
-
 pub fn display_clean_results_with_config(
     orphaned: &[PortInfo],
     killed: &[u32],
@@ -582,10 +562,6 @@ fn render_clean_results_body(orphaned: &[PortInfo], killed: &[u32], failed: &[u3
     }
     out.push('\n');
     out
-}
-
-pub fn display_watch_header() {
-    display_watch_header_with_config(&DisplayConfig::default());
 }
 
 pub fn display_watch_header_with_config(config: &DisplayConfig) {
