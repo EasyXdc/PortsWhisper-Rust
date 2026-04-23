@@ -831,13 +831,12 @@ fn terminal_width_from_env() -> Option<usize> {
 }
 
 fn current_time_label() -> String {
-    std::process::Command::new("date")
-        .arg("+%T")
-        .output()
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map(|s| s.trim().to_string())
-        .unwrap_or_else(|| "--:--:--".to_string())
+    let duration = std::time::SystemTime::UNIX_EPOCH.elapsed().unwrap_or_default();
+    let total_secs = duration.as_secs();
+    let hours = (total_secs / 3600) % 24;
+    let minutes = (total_secs / 60) % 60;
+    let seconds = total_secs % 60;
+    format!("{hours:02}:{minutes:02}:{seconds:02}")
 }
 
 #[cfg(test)]
