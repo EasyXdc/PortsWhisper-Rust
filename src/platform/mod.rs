@@ -698,7 +698,6 @@ fn windows_all_processes_raw() -> Vec<RawProcessEntry> {
 }
 
 #[cfg(unix)]
-#[cfg(unix)]
 fn unix_process_tree(pid: u32) -> Vec<ProcessTreeNode> {
     unix_process_tree_with(pid, |target_pid| {
         run_output_with_c_locale(
