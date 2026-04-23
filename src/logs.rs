@@ -263,7 +263,7 @@ fn render_logs_err_json(command: &str, err: LogsJsonError) -> serde_json::Result
     )
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 fn render_logs_json_result(
     command: &str,
     result: Result<LogsJsonResult, LogsJsonError>,

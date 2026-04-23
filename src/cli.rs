@@ -1500,7 +1500,7 @@ fn run_clean_json() -> i32 {
     if json_exit != 0 { json_exit } else { exit_code }
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 fn run_clean_json_with<FindOrphaned, Kill>(
     find_orphaned: FindOrphaned,
     kill: Kill,
@@ -1531,8 +1531,8 @@ where
     .map_err(|err| (format!("failed to render json for ports clean: {err}"), 1))
 }
 
+#[cfg(test)]
 #[derive(Debug, Eq, PartialEq)]
-#[allow(dead_code)]
 struct CleanJsonOutput {
     output: String,
     exit_code: i32,
