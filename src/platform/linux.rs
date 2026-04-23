@@ -2,7 +2,7 @@ use super::{
     PlatformScanner, unix_batch_process_info, unix_pid_exists, unix_process_details,
     unix_process_tree,
 };
-use super::{linux_batch_cwd, linux_listening_ports_raw, unix_all_processes_raw};
+use super::{linux_batch_cwd, linux_listening_port_raw, linux_listening_ports_raw, unix_all_processes_raw};
 use crate::kill;
 use crate::logs;
 use crate::model::{LogFile, ProcessTreeNode, RawPortEntry, RawProcessDetails, RawProcessEntry};
@@ -14,6 +14,10 @@ pub struct LinuxScanner;
 impl PlatformScanner for LinuxScanner {
     fn get_listening_ports_raw(&self) -> Vec<RawPortEntry> {
         linux_listening_ports_raw()
+    }
+
+    fn get_listening_port_raw(&self, port: u16) -> Option<RawPortEntry> {
+        linux_listening_port_raw(port)
     }
 
     fn batch_process_info(&self, pids: &[u32]) -> HashMap<u32, RawProcessDetails> {

@@ -272,6 +272,55 @@ fn linux_listening_ports_raw() -> Vec<RawPortEntry> {
 }
 
 #[cfg(target_os = "linux")]
+pub(crate) fn linux_listening_port_raw(port: u16) -> Option<RawPortEntry> {
+    if command_exists("ss") {
+        let raw = degrade_command_output(run_output(
+            "ss",
+            ["-tlnp", &format!("sport = :{port}")],
+            Some(Duration::from_millis(10_000)),
+        ));
+        if let Some(entry) = parse_ss_single_port(&raw, port) {
+            return Some(entry);
+        }
+    }
+    let entries = linux_listening_ports_from_procfs();
+    entries.into_iter().find(|e| e.port == port)
+}
+
+#[cfg(target_os = "linux")]
+fn parse_ss_single_port(raw: &str, port: u16) -> Option<RawPortEntry> {
+    let mut seen = HashMap::new();
+    for line in raw.lines().skip(1) {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() < 5 {
+            continue;
+        }
+        let Some(p) = parse_port_suffix(parts[3]) else {
+            continue;
+        };
+        if p != port {
+            continue;
+        }
+        if seen.contains_key(&p) {
+            continue;
+        }
+        let users = parts.get(5..).unwrap_or(&[]).join(" ");
+        let Some(pid) = parse_after(&users, "pid=", |c| !c.is_ascii_digit()) else {
+            continue;
+        };
+        let process_name =
+            parse_quoted_process_name(&users).unwrap_or_else(|| linux_proc_name(pid));
+        seen.insert(p, true);
+        return Some(RawPortEntry {
+            port: p,
+            pid,
+            process_name,
+        });
+    }
+    None
+}
+
+#[cfg(target_os = "linux")]
 fn linux_listening_ports_from_procfs() -> Vec<RawPortEntry> {
     let tcp = std::fs::read_to_string("/proc/net/tcp").ok();
     let tcp6 = std::fs::read_to_string("/proc/net/tcp6").ok();
