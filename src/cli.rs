@@ -291,9 +291,7 @@ fn parse_command(
     match args.first().map(String::as_str) {
         None => CliCommand::List(parse_query_filters(args)),
         Some("help" | "--help" | "-h") => CliCommand::Help,
-        Some("completion") => CliCommand::Completion(
-            completion_shell.expect("completion subcommand should be validated by cli_args::parse"),
-        ),
+        Some("completion") => CliCommand::Completion(completion_shell.unwrap_or(Shell::Bash)),
         Some("check") => CliCommand::Check(parse_check_ports(&args[1..])),
         Some("open") => CliCommand::Open(parse_open_port(&args[1..])),
         Some("ps") => CliCommand::Ps(parse_query_filters(&args[1..])),
@@ -375,19 +373,14 @@ fn parse_query_filters(args: &[String]) -> QueryFilters {
 
 fn parse_check_ports(args: &[String]) -> Vec<u16> {
     args.iter()
-        .map(|value| {
-            value
-                .parse::<u16>()
-                .expect("check ports should be validated by cli_args::parse")
-        })
+        .filter_map(|value| value.parse::<u16>().ok())
         .collect()
 }
 
 fn parse_open_port(args: &[String]) -> u16 {
     args.first()
-        .expect("open port should be validated by cli_args::parse")
-        .parse::<u16>()
-        .expect("open port should be validated by cli_args::parse")
+        .and_then(|v| v.parse::<u16>().ok())
+        .unwrap_or(0)
 }
 
 fn is_query_filter_flag(arg: &str) -> bool {

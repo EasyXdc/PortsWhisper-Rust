@@ -188,9 +188,9 @@ fn parse_completion_shell(
     let matches = command(binary_name).try_get_matches_from(
         std::iter::once(binary_name.to_string()).chain(args.iter().cloned()),
     )?;
-    let (_, subcommand_matches) = matches
-        .subcommand()
-        .expect("completion args should parse as a subcommand");
+    let Some((_, subcommand_matches)) = matches.subcommand() else {
+        return Ok(Some(Shell::Bash));
+    };
     Ok(subcommand_matches.get_one::<Shell>("shell").copied())
 }
 
