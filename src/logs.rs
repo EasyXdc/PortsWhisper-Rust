@@ -216,50 +216,67 @@ pub fn run_logs(args: &[String]) -> i32 {
 
 pub fn run_logs_json(args: &[String]) -> i32 {
     let command = format!("ports {}", args.join(" "));
-    match render_logs_json_result(
-        &command,
-        run_logs_json_with(
-            args,
-            scanner::resolve_kill_target,
-            get_process_log_files,
-            read_log_output,
-            get_system_log_command_with_since,
-            run_shell_output,
-        ),
-    ) {
-        Ok((output, exit_code)) => {
-            println!("{output}");
-            exit_code
+    let result = run_logs_json_with(
+        args,
+        scanner::resolve_kill_target,
+        get_process_log_files,
+        read_log_output,
+        get_system_log_command_with_since,
+        run_shell_output,
+    );
+    let (json_result, exit_code) = match result {
+        Ok(r) => {
+            let exit_code = r.exit_code;
+            (render_logs_ok_json(&command, r), exit_code)
         }
-        Err(err) => {
-            eprintln!("failed to render json for ports logs: {err}");
-            1
+        Err(e) => {
+            let exit_code = e.exit_code;
+            (render_logs_err_json(&command, e), exit_code)
         }
-    }
+    };
+    let json_exit = json_output::print_json_output(json_result);
+    if json_exit != 0 { json_exit } else { exit_code }
 }
 
-fn render_logs_json_result(
-    command: &str,
-    result: Result<LogsJsonResult, LogsJsonError>,
-) -> serde_json::Result<(String, i32)> {
+fn render_logs_ok_json(command: &str, result: LogsJsonResult) -> serde_json::Result<String> {
     let warnings = crate::error::drain_user_warnings()
         .into_iter()
         .map(|warning| warning.user_message())
         .collect::<Vec<_>>();
+    json_output::render_json(
+        &json_output::CommandEnvelope::ok(command, result.payload).with_warnings(warnings),
+    )
+}
+
+fn render_logs_err_json(command: &str, err: LogsJsonError) -> serde_json::Result<String> {
+    let warnings = crate::error::drain_user_warnings()
+        .into_iter()
+        .map(|warning| warning.user_message())
+        .collect::<Vec<_>>();
+    json_output::render_json(
+        &json_output::CommandEnvelope::<json_output::LogsPayload>::err(
+            command,
+            err.code,
+            err.message,
+        )
+        .with_warnings(warnings),
+    )
+}
+
+#[allow(dead_code)]
+fn render_logs_json_result(
+    command: &str,
+    result: Result<LogsJsonResult, LogsJsonError>,
+) -> serde_json::Result<(String, i32)> {
     match result {
-        Ok(result) => json_output::render_json(
-            &json_output::CommandEnvelope::ok(command, result.payload).with_warnings(warnings),
-        )
-        .map(|output| (output, result.exit_code)),
-        Err(err) => json_output::render_json(
-            &json_output::CommandEnvelope::<json_output::LogsPayload>::err(
-                command,
-                err.code,
-                err.message,
-            )
-            .with_warnings(warnings),
-        )
-        .map(|output| (output, err.exit_code)),
+        Ok(result) => {
+            let exit_code = result.exit_code;
+            render_logs_ok_json(command, result).map(|output| (output, exit_code))
+        }
+        Err(err) => {
+            let exit_code = err.exit_code;
+            render_logs_err_json(command, err).map(|output| (output, exit_code))
+        }
     }
 }
 

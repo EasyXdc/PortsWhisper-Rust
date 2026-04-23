@@ -23,19 +23,11 @@ pub fn run_check(ports: &[u16]) -> i32 {
 
 pub fn run_check_json(ports: &[u16]) -> i32 {
     let results = check_ports(ports);
-    match json_output::render_json(&json_output::CommandEnvelope::ok(
-        "ports check",
-        check_payload(&results),
-    )) {
-        Ok(output) => {
-            println!("{output}");
-            exit_code(&results)
-        }
-        Err(err) => {
-            eprintln!("failed to render json for ports check: {err}");
-            1
-        }
-    }
+    let exit = exit_code(&results);
+    let json_exit = json_output::print_json_output(json_output::render_json(
+        &json_output::CommandEnvelope::ok("ports check", check_payload(&results)),
+    ));
+    if json_exit != 0 { json_exit } else { exit }
 }
 
 pub fn check_payload(results: &[PortCheckResult]) -> CheckPayload {

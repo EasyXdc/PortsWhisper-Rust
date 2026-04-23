@@ -88,16 +88,7 @@ fn dispatch(parsed: ParsedCli) -> i32 {
             }
             ports = filter_ports(ports, &filters);
             if parsed.json {
-                return match render_list_json(&ports, &filters) {
-                    Ok(output) => {
-                        println!("{output}");
-                        0
-                    }
-                    Err(err) => {
-                        eprintln!("failed to render json for ports: {err}");
-                        1
-                    }
-                };
+                return json_output::print_json_output(render_list_json(&ports, &filters));
             }
             let display_config =
                 display::with_command_elapsed(&display_config, started_at.elapsed());
@@ -107,16 +98,7 @@ fn dispatch(parsed: ParsedCli) -> i32 {
         }
         CliCommand::Help => {
             if parsed.json {
-                return match format_help_json() {
-                    Ok(output) => {
-                        println!("{output}");
-                        0
-                    }
-                    Err(err) => {
-                        eprintln!("failed to render json for ports help: {err}");
-                        1
-                    }
-                };
+                return json_output::print_json_output(format_help_json());
             }
             print_help();
             0
@@ -174,16 +156,7 @@ fn dispatch(parsed: ParsedCli) -> i32 {
                     .unwrap_or(std::cmp::Ordering::Equal)
             });
             if parsed.json {
-                return match render_ps_json(&processes, &filters) {
-                    Ok(output) => {
-                        println!("{output}");
-                        0
-                    }
-                    Err(err) => {
-                        eprintln!("failed to render json for ports ps: {err}");
-                        1
-                    }
-                };
+                return json_output::print_json_output(render_ps_json(&processes, &filters));
             }
             display::display_process_table_with_config(
                 &processes,
@@ -228,19 +201,7 @@ fn dispatch(parsed: ParsedCli) -> i32 {
             }
             ports = filter_ports(ports, &filters);
             if parsed.json {
-                return match render_list_json(&ports, &filters) {
-                    Ok(output) => {
-                        println!("{output}");
-                        0
-                    }
-                    Err(err) => {
-                        eprintln!(
-                            "failed to render json for ports {}-{}: {err}",
-                            range.start, range.end
-                        );
-                        1
-                    }
-                };
+                return json_output::print_json_output(render_list_json(&ports, &filters));
             }
             display::display_port_table_with_config(&ports, !parsed.show_all, &display_config);
             print_warning_lines(&error::drain_user_warnings());
@@ -248,16 +209,8 @@ fn dispatch(parsed: ParsedCli) -> i32 {
         }
         CliCommand::Unknown(other) => {
             if parsed.json {
-                return match format_unknown_command_json(&other) {
-                    Ok(output) => {
-                        println!("{output}");
-                        1
-                    }
-                    Err(err) => {
-                        eprintln!("failed to render json for ports {other}: {err}");
-                        1
-                    }
-                };
+                let exit = json_output::print_json_output(format_unknown_command_json(&other));
+                return if exit == 0 { 1 } else { exit };
             }
             for line in unknown_command_lines(&other) {
                 println!("{line}");
@@ -519,16 +472,7 @@ fn run_port_detail(
     }
     .filter(|info| matches_port_filters(info, filters));
     if json {
-        return match render_port_detail_json(port, info.as_ref(), filters) {
-            Ok(output) => {
-                println!("{output}");
-                0
-            }
-            Err(err) => {
-                eprintln!("failed to render json for ports {port}: {err}");
-                1
-            }
-        };
+        return json_output::print_json_output(render_port_detail_json(port, info.as_ref(), filters));
     }
     display::display_port_detail_with_config(info.as_ref(), display_config);
     print_warning_lines(&error::drain_user_warnings());
@@ -1540,18 +1484,26 @@ fn run_clean(display_config: &display::DisplayConfig) -> i32 {
 }
 
 fn run_clean_json() -> i32 {
-    match run_clean_json_with(scanner::find_orphaned_processes, kill::kill_process) {
-        Ok(result) => {
-            println!("{}", result.output);
-            result.exit_code
-        }
-        Err((message, exit_code)) => {
-            eprintln!("{message}");
-            exit_code
-        }
-    }
+    let orphaned = scanner::find_orphaned_processes();
+    let outcome = apply_clean_json(&orphaned, kill::kill_process);
+    let warnings = drained_warning_messages();
+    let exit_code = outcome.exit_code;
+    let json_exit = json_output::print_json_output(json_output::render_json(
+        &json_output::CommandEnvelope::ok(
+            "ports clean",
+            json_output::clean_payload(
+                outcome.confirmed,
+                &orphaned,
+                outcome.killed,
+                outcome.failed,
+            ),
+        )
+        .with_warnings(warnings),
+    ));
+    if json_exit != 0 { json_exit } else { exit_code }
 }
 
+#[allow(dead_code)]
 fn run_clean_json_with<FindOrphaned, Kill>(
     find_orphaned: FindOrphaned,
     kill: Kill,
@@ -1583,6 +1535,7 @@ where
 }
 
 #[derive(Debug, Eq, PartialEq)]
+#[allow(dead_code)]
 struct CleanJsonOutput {
     output: String,
     exit_code: i32,

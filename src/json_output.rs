@@ -376,6 +376,19 @@ impl From<&crate::check::PortCheckResult> for CheckPortPayload {
     }
 }
 
+pub fn print_json_output(result: serde_json::Result<String>) -> i32 {
+    match result {
+        Ok(output) => {
+            println!("{output}");
+            0
+        }
+        Err(err) => {
+            eprintln!("failed to render json: {err}");
+            1
+        }
+    }
+}
+
 fn path_to_string(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }

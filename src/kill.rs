@@ -127,16 +127,10 @@ pub fn run_kill(args: &[String]) -> i32 {
 pub fn run_kill_json(args: &[String]) -> i32 {
     let result = run_kill_json_with(args, scanner::resolve_kill_target, kill_process);
     let exit_code = result.exit_code;
-    match json_output::render_json(&kill_json_envelope(args, result)) {
-        Ok(output) => {
-            println!("{output}");
-            exit_code
-        }
-        Err(err) => {
-            eprintln!("failed to render json for ports kill: {err}");
-            1
-        }
-    }
+    let json_exit = json_output::print_json_output(
+        json_output::render_json(&kill_json_envelope(args, result))
+    );
+    if json_exit != 0 { json_exit } else { exit_code }
 }
 
 fn command_string(args: &[String]) -> String {
