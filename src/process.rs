@@ -186,11 +186,11 @@ mod tests {
     };
     use crate::framework::detect_framework;
     use crate::model::{
-        KillResolutionKind, LogFile, PortInfo, ProcessStatus, ProcessTreeNode, RawPortEntry,
+        KillResolutionKind, LogFile, ProcessStatus, ProcessTreeNode, RawPortEntry,
         RawProcessDetails, RawProcessEntry,
     };
     use crate::platform::PlatformScanner;
-    use crate::test_support::FakePlatformScanner;
+    use crate::test_support::{fake_port, fake_port_with_status, FakePlatformScanner};
     use crate::util::find_project_root;
     use std::fs;
     use std::path::PathBuf;
@@ -399,9 +399,9 @@ mod tests {
     #[test]
     fn clean_detection_matches_node_reference_status_filter() {
         let ports = vec![
-            port_with_status(3000, 30, ProcessStatus::Healthy),
-            port_with_status(3001, 31, ProcessStatus::Orphaned),
-            port_with_status(3002, 32, ProcessStatus::Zombie),
+            fake_port_with_status(3000, 30, ProcessStatus::Healthy),
+            fake_port_with_status(3001, 31, ProcessStatus::Orphaned),
+            fake_port_with_status(3002, 32, ProcessStatus::Zombie),
         ];
 
         let orphaned = find_orphaned_processes_with(|| ports.clone());
@@ -480,29 +480,6 @@ mod tests {
         assert_eq!(processes.len(), 1);
         assert_eq!(processes[0].pid, 42);
         assert_eq!(fake.cwd_calls.lock().unwrap().as_slice(), &[vec![42]]);
-    }
-
-    fn fake_port(port: u16, pid: u32) -> PortInfo {
-        port_with_status(port, pid, ProcessStatus::Healthy)
-    }
-
-    fn port_with_status(port: u16, pid: u32, status: ProcessStatus) -> PortInfo {
-        PortInfo {
-            port,
-            pid,
-            process_name: "node".to_string(),
-            raw_name: "node".to_string(),
-            command: "node server.js".to_string(),
-            cwd: None,
-            project_name: None,
-            framework: None,
-            uptime: None,
-            start_time: None,
-            status,
-            memory: None,
-            git_branch: None,
-            process_tree: Vec::new(),
-        }
     }
 
     fn fake_process_info(pid: u32, process_name: &str, command: &str) -> crate::model::ProcessInfo {

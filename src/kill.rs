@@ -514,7 +514,7 @@ mod tests {
         render_kill_target_line, run_kill_json_with, validate_range_target,
     };
     use crate::json_output;
-    use crate::model::{KillResolutionKind, KillTargetResolution, PortInfo, ProcessStatus};
+    use crate::model::{KillResolutionKind, KillTargetResolution};
     use serde_json::json;
     use std::cell::RefCell;
 
@@ -915,8 +915,7 @@ mod tests {
         let _guard = crate::style::glyph_test_lock().lock().unwrap();
         crate::style::set_force_ascii(true);
 
-        let success = strip_ansi(
-            render_kill_target_line(
+        let success = strip_ansi(&render_kill_target_line(
                 &KillJsonResult {
                     signal: "SIGTERM".to_string(),
                     targets: vec![json_output::KillTargetPayload {
@@ -936,8 +935,7 @@ mod tests {
             .expect("success line should render"),
         );
 
-        let failure = strip_ansi(
-            render_kill_target_line(
+        let failure = strip_ansi(&render_kill_target_line(
                 &KillJsonResult {
                     signal: "SIGTERM".to_string(),
                     targets: vec![json_output::KillTargetPayload {
@@ -969,41 +967,6 @@ mod tests {
         );
     }
 
-    fn fake_port(port: u16, pid: u32) -> PortInfo {
-        PortInfo {
-            port,
-            pid,
-            process_name: "node".to_string(),
-            raw_name: "node".to_string(),
-            command: "node server.js".to_string(),
-            cwd: None,
-            project_name: None,
-            framework: None,
-            uptime: None,
-            start_time: None,
-            status: ProcessStatus::Healthy,
-            memory: None,
-            git_branch: None,
-            process_tree: Vec::new(),
-        }
-    }
-
-    fn strip_ansi(s: String) -> String {
-        let mut out = String::new();
-        let mut esc = false;
-        for ch in s.chars() {
-            if esc {
-                if ch == 'm' {
-                    esc = false;
-                }
-                continue;
-            }
-            if ch == '\x1b' {
-                esc = true;
-                continue;
-            }
-            out.push(ch);
-        }
-        out
-    }
+    use crate::test_support::fake_port;
+    use crate::test_support::strip_ansi;
 }

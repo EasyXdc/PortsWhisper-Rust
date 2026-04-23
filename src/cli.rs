@@ -605,6 +605,7 @@ mod tests {
     use crate::display::DisplayConfig;
     use crate::error::{PortError, drain_user_warnings, record_user_warning, verbose_test_lock};
     use crate::model::{PortInfo, ProcessInfo, ProcessStatus};
+    use crate::test_support::fake_port_with_status;
     use clap_complete::Shell;
     use serde_json::json;
     use std::cell::RefCell;
@@ -948,7 +949,7 @@ mod tests {
 
     #[test]
     fn clean_prompt_flow_only_kills_on_yes_answer() {
-        let orphaned = vec![fake_port(3000, 42), fake_port(3001, 43)];
+        let orphaned = vec![fake_port_with_status(3000, 42, ProcessStatus::Orphaned), fake_port_with_status(3001, 43, ProcessStatus::Orphaned)];
         let attempts = RefCell::new(Vec::new());
         let outcome = apply_clean_answer(&orphaned, Some("n"), |pid, signal| {
             attempts.borrow_mut().push((pid, signal.to_string()));
@@ -1003,7 +1004,7 @@ mod tests {
     #[test]
     fn clean_path_reuses_single_orphaned_snapshot() {
         let calls = RefCell::new(0usize);
-        let orphaned = vec![fake_port(3000, 42)];
+        let orphaned = vec![fake_port_with_status(3000, 42, ProcessStatus::Orphaned)];
 
         let exit = run_clean_with(
             || {
@@ -1108,7 +1109,7 @@ mod tests {
             ms: 10_000,
         });
 
-        let rendered = render_list_json(&[fake_port(3000, 42)], &QueryFilters::default())
+        let rendered = render_list_json(&[fake_port_with_status(3000, 42, ProcessStatus::Orphaned)], &QueryFilters::default())
             .expect("json render should succeed");
 
         assert_eq!(
@@ -1210,7 +1211,7 @@ mod tests {
         drain_user_warnings();
 
         let rendered = run_clean_json_with(
-            || vec![fake_port(3000, 42), fake_port(3001, 43)],
+            || vec![fake_port_with_status(3000, 42, ProcessStatus::Orphaned), fake_port_with_status(3001, 43, ProcessStatus::Orphaned)],
             |pid, _signal| pid == 42,
         )
         .expect("json render should succeed");
@@ -1265,7 +1266,7 @@ mod tests {
             ms: 10_000,
         });
 
-        let rendered = run_clean_json_with(|| vec![fake_port(3000, 42)], |_pid, _signal| true)
+        let rendered = run_clean_json_with(|| vec![fake_port_with_status(3000, 42, ProcessStatus::Orphaned)], |_pid, _signal| true)
             .expect("json render should succeed");
 
         assert_eq!(
@@ -1305,7 +1306,7 @@ mod tests {
         drain_user_warnings();
 
         let exit = run_clean_json_with(
-            || vec![fake_port(3000, 42), fake_port(3001, 43)],
+            || vec![fake_port_with_status(3000, 42, ProcessStatus::Orphaned), fake_port_with_status(3001, 43, ProcessStatus::Orphaned)],
             |pid, _signal| pid == 42,
         )
         .expect("json render should succeed")
@@ -1421,32 +1422,13 @@ mod tests {
         );
     }
 
-    fn fake_port(port: u16, pid: u32) -> PortInfo {
-        PortInfo {
-            port,
-            pid,
-            process_name: "node".to_string(),
-            raw_name: "node".to_string(),
-            command: "node server.js".to_string(),
-            cwd: None,
-            project_name: None,
-            framework: None,
-            uptime: None,
-            start_time: None,
-            status: ProcessStatus::Orphaned,
-            memory: None,
-            git_branch: None,
-            process_tree: Vec::new(),
-        }
-    }
-
     fn fake_port_with_filters(
         port: u16,
         pid: u32,
         project: Option<&str>,
         framework: Option<&str>,
     ) -> PortInfo {
-        let mut info = fake_port(port, pid);
+        let mut info = fake_port_with_status(port, pid, ProcessStatus::Orphaned);
         info.project_name = project.map(str::to_string);
         info.framework = framework.map(str::to_string);
         info

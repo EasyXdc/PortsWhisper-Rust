@@ -1,5 +1,6 @@
 use crate::model::{
-    DockerInfo, LogFile, ProcessTreeNode, RawPortEntry, RawProcessDetails, RawProcessEntry,
+    DockerInfo, LogFile, ProcessTreeNode, ProcessStatus, RawPortEntry, RawProcessDetails,
+    RawProcessEntry,
 };
 use crate::platform::PlatformScanner;
 use std::collections::{HashMap, HashSet};
@@ -495,6 +496,52 @@ impl Drop for DockerFixtureGuard {
     fn drop(&mut self) {
         let _ = self.cleanup();
     }
+}
+
+pub fn fake_port(port: u16, pid: u32) -> crate::model::PortInfo {
+    fake_port_with_status(port, pid, ProcessStatus::Healthy)
+}
+
+pub fn fake_port_with_status(
+    port: u16,
+    pid: u32,
+    status: crate::model::ProcessStatus,
+) -> crate::model::PortInfo {
+    crate::model::PortInfo {
+        port,
+        pid,
+        process_name: "node".to_string(),
+        raw_name: "node".to_string(),
+        command: "node server.js".to_string(),
+        cwd: None,
+        project_name: None,
+        framework: None,
+        uptime: None,
+        start_time: None,
+        status,
+        memory: None,
+        git_branch: None,
+        process_tree: Vec::new(),
+    }
+}
+
+pub fn strip_ansi(s: &str) -> String {
+    let mut out = String::new();
+    let mut esc = false;
+    for ch in s.chars() {
+        if esc {
+            if ch == 'm' {
+                esc = false;
+            }
+            continue;
+        }
+        if ch == '\x1b' {
+            esc = true;
+            continue;
+        }
+        out.push(ch);
+    }
+    out
 }
 
 #[cfg(test)]

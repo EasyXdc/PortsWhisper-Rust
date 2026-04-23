@@ -842,26 +842,6 @@ fn current_time_label() -> String {
 }
 
 #[cfg(test)]
-fn strip_ansi(s: &str) -> String {
-    let mut out = String::new();
-    let mut esc = false;
-    for ch in s.chars() {
-        if esc {
-            if ch == 'm' {
-                esc = false;
-            }
-            continue;
-        }
-        if ch == '\x1b' {
-            esc = true;
-            continue;
-        }
-        out.push(ch);
-    }
-    out
-}
-
-#[cfg(test)]
 mod tests {
     use super::{
         DisplayConfig, PORT_HEADERS, PROCESS_HEADERS, clamp_header_width, detected_terminal_width,
@@ -870,9 +850,10 @@ mod tests {
         render_empty_process_table_message, render_header_with_config, render_port_detail_body,
         render_port_table_output, render_process_table_output, render_process_tree_line,
         render_table, render_watch_event_line, resolve_header_width,
-        should_show_slow_command_spinner, slow_command_spinner_threshold, strip_ansi, visible_len,
+        should_show_slow_command_spinner, slow_command_spinner_threshold, visible_len,
     };
     use crate::model::{DisplayTime, PortInfo, ProcessInfo, ProcessStatus, ProcessTreeNode};
+    use crate::test_support::strip_ansi;
     use std::path::PathBuf;
     use std::time::Duration;
 

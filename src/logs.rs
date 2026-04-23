@@ -865,9 +865,8 @@ mod tests {
         sort_and_dedupe_log_files, tail_follow_shell_command,
     };
     use crate::error::{PortError, drain_user_warnings, record_user_warning, verbose_test_lock};
-    use crate::model::{
-        KillResolutionKind, KillTargetResolution, LogFdKind, LogFile, PortInfo, ProcessStatus,
-    };
+    use crate::model::{KillResolutionKind, KillTargetResolution, LogFdKind, LogFile};
+    use crate::test_support::fake_port;
     use std::path::PathBuf;
 
     fn args(values: &[&str]) -> Vec<String> {
@@ -1450,25 +1449,6 @@ mod tests {
             "expected ascii-safe header marker: {}",
             header[0]
         );
-    }
-
-    fn fake_port(port: u16, pid: u32) -> PortInfo {
-        PortInfo {
-            port,
-            pid,
-            process_name: "node".to_string(),
-            raw_name: "node".to_string(),
-            command: "node server.js".to_string(),
-            cwd: None,
-            project_name: None,
-            framework: None,
-            uptime: None,
-            start_time: None,
-            status: ProcessStatus::Healthy,
-            memory: None,
-            git_branch: None,
-            process_tree: Vec::new(),
-        }
     }
 
     fn log_file(path: &str, fd: LogFdKind, kind: &str, priority: u8) -> LogFile {
