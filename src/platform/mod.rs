@@ -18,23 +18,35 @@ pub mod macos;
 #[cfg(target_os = "windows")]
 pub mod windows;
 
+/// Platform-specific interface for discovering ports, processes, and their metadata.
 pub trait PlatformScanner: Sync {
+    /// Return all TCP LISTEN entries on the system.
     fn get_listening_ports_raw(&self) -> Vec<RawPortEntry>;
+    /// Return the TCP LISTEN entry for a specific port, if any.
     fn get_listening_port_raw(&self, port: u16) -> Option<RawPortEntry> {
         self.get_listening_ports_raw()
             .into_iter()
             .find(|entry| entry.port == port)
     }
+    /// Fetch process details (ppid, stat, rss, lstart, command) for the given PIDs.
     fn batch_process_info(&self, pids: &[u32]) -> HashMap<u32, RawProcessDetails>;
+    /// Fetch process details for a single PID.
     fn get_process_details(&self, pid: u32) -> Option<RawProcessDetails> {
         self.batch_process_info(&[pid]).remove(&pid)
     }
+    /// Resolve the current working directory for the given PIDs.
     fn batch_cwd(&self, pids: &[u32]) -> HashMap<u32, PathBuf>;
+    /// Return all running processes with CPU, memory, and command info.
     fn get_all_processes_raw(&self) -> Vec<RawProcessEntry>;
+    /// Walk the parent chain from the given PID up to PID 1.
     fn get_process_tree(&self, pid: u32) -> Vec<ProcessTreeNode>;
+    /// Check whether a process with the given PID exists.
     fn pid_exists(&self, pid: u32) -> bool;
+    /// Send a signal to the process with the given PID. Returns true on success.
     fn kill_process(&self, pid: u32, signal: &str) -> bool;
+    /// Discover log files associated with the given PID.
     fn get_process_log_files(&self, pid: u32) -> Vec<LogFile>;
+    /// Return a shell command string for reading system logs for the given PID.
     fn get_system_log_command(&self, pid: u32, follow: bool) -> Option<String>;
 }
 

@@ -9,10 +9,12 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::thread;
 
+/// Return enriched port metadata for all TCP listeners on the system.
 pub fn get_listening_ports(detailed: bool) -> Vec<PortInfo> {
     get_listening_ports_with(platform::native_scanner(), detailed, None)
 }
 
+/// Return enriched port metadata for a single port, or None if nothing is listening.
 pub fn get_port_details(port: u16) -> Option<PortInfo> {
     get_port_details_with(platform::native_scanner(), port, None)
 }

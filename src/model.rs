@@ -1,11 +1,16 @@
 use std::path::PathBuf;
 use std::{fmt, str::FromStr};
 
+/// Runtime health classification for a listener process.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProcessStatus {
+    /// Process has a known parent and is functioning normally.
     Healthy,
+    /// Process parent is PID 1 (likely detached from terminal).
     Orphaned,
+    /// Process is in zombie state (defunct, awaiting reaping).
     Zombie,
+    /// Process status could not be determined.
     Unknown,
 }
 
@@ -20,6 +25,7 @@ impl ProcessStatus {
     }
 }
 
+/// A single node in a process ancestry chain.
 #[derive(Clone, Debug)]
 pub struct ProcessTreeNode {
     pub pid: u32,
@@ -27,6 +33,7 @@ pub struct ProcessTreeNode {
     pub name: String,
 }
 
+/// Parsed representation of a process start timestamp.
 #[derive(Clone, Debug)]
 pub struct DisplayTime {
     pub weekday: String,
@@ -92,6 +99,7 @@ fn month_number(name: &str) -> Result<u8, ()> {
     }
 }
 
+/// Complete metadata for a process listening on a TCP port.
 #[derive(Clone, Debug)]
 pub struct PortInfo {
     pub port: u16,
@@ -110,6 +118,7 @@ pub struct PortInfo {
     pub process_tree: Vec<ProcessTreeNode>,
 }
 
+/// Metadata for a running process in the dev-process table.
 #[derive(Clone, Debug)]
 pub struct ProcessInfo {
     pub pid: u32,
@@ -127,6 +136,7 @@ pub struct ProcessInfo {
     pub status_raw: String,
 }
 
+/// Container-to-host-port mapping discovered from `docker ps`.
 #[derive(Clone, Debug)]
 pub struct DockerInfo {
     pub host_port: u16,
@@ -135,6 +145,7 @@ pub struct DockerInfo {
     pub framework: String,
 }
 
+/// Classification of a log file descriptor.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum LogFdKind {
     Stdout,
@@ -142,6 +153,7 @@ pub enum LogFdKind {
     File,
 }
 
+/// A discovered log file associated with a process.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LogFile {
     pub path: PathBuf,
@@ -150,12 +162,14 @@ pub struct LogFile {
     pub priority: u8,
 }
 
+/// Whether a kill target was resolved by port or by PID.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum KillResolutionKind {
     Port,
     Pid,
 }
 
+/// Result of resolving a kill target from a port or PID number.
 #[derive(Clone, Debug)]
 pub struct KillTargetResolution {
     pub pid: u32,
@@ -164,6 +178,7 @@ pub struct KillTargetResolution {
     pub info: Option<PortInfo>,
 }
 
+/// Minimal data returned by the platform port scanner before enrichment.
 #[derive(Clone, Debug)]
 pub struct RawPortEntry {
     pub port: u16,
@@ -171,6 +186,7 @@ pub struct RawPortEntry {
     pub process_name: String,
 }
 
+/// Process details obtained from `ps` or `/proc` before enrichment.
 #[derive(Clone, Debug)]
 pub struct RawProcessDetails {
     pub pid: u32,
@@ -181,6 +197,7 @@ pub struct RawProcessDetails {
     pub command: String,
 }
 
+/// Raw process list entry from `ps -eo` before enrichment.
 #[derive(Clone, Debug)]
 pub struct RawProcessEntry {
     pub pid: u32,

@@ -1,3 +1,4 @@
+/// Error variants for system command failures during port/process inspection.
 #[derive(Debug)]
 pub enum PortError {
     CommandMissing(String),

@@ -9,10 +9,12 @@ use crate::platform::{self, PlatformScanner};
 use crate::ports;
 use crate::util::{find_project_root, format_memory, format_uptime_from_lstart, path_basename};
 
+/// Return enriched process metadata for all running processes.
 pub fn get_all_processes() -> Vec<ProcessInfo> {
     get_all_processes_with(platform::native_scanner())
 }
 
+/// Return enriched process metadata for dev-related processes only.
 pub fn get_all_dev_processes() -> Vec<ProcessInfo> {
     get_all_dev_processes_with(platform::native_scanner())
 }
@@ -117,6 +119,7 @@ where
         .collect()
 }
 
+/// Return port entries whose processes are orphaned or zombie.
 pub fn find_orphaned_processes() -> Vec<PortInfo> {
     find_orphaned_processes_with(|| ports::get_listening_ports(false))
 }
@@ -131,6 +134,7 @@ where
         .collect()
 }
 
+/// Resolve a port number or PID to a killable target.
 pub fn resolve_kill_target(n: u32) -> Option<KillTargetResolution> {
     resolve_kill_target_with(n, ports::get_port_details, platform::pid_exists)
 }
@@ -168,6 +172,7 @@ where
     None
 }
 
+/// Check whether a process is development-related based on name and command.
 pub fn keep_dev_process(info: &ProcessInfo) -> bool {
     is_dev_process(&info.process_name, &info.command)
 }
