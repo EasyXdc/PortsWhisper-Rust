@@ -141,14 +141,14 @@ where
         (
             ps_task
                 .join()
-                .expect("process collector thread should not panic"),
+                .unwrap_or_default(),
             cwd_task
                 .join()
-                .expect("cwd collector thread should not panic"),
+                .unwrap_or_default(),
             match docker_task {
                 Some(task) => task
                     .join()
-                    .expect("docker collector thread should not panic"),
+                    .unwrap_or_default(),
                 None => Default::default(),
             },
         )
