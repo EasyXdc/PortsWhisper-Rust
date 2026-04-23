@@ -208,3 +208,60 @@ pub struct RawProcessEntry {
     pub lstart: Option<String>,
     pub command: String,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn process_status_labels_match_conventions() {
+        assert_eq!(ProcessStatus::Healthy.label(), "healthy");
+        assert_eq!(ProcessStatus::Orphaned.label(), "orphaned");
+        assert_eq!(ProcessStatus::Zombie.label(), "zombie");
+        assert_eq!(ProcessStatus::Unknown.label(), "unknown");
+    }
+
+    #[test]
+    fn display_time_parses_standard_lstart_format() {
+        let dt: DisplayTime = "Fri Apr 17 10:00:00 2026".parse().unwrap();
+        assert_eq!(dt.weekday, "Fri");
+        assert_eq!(dt.month_name, "Apr");
+        assert_eq!(dt.month, 4);
+        assert_eq!(dt.day, 17);
+        assert_eq!(dt.hour, 10);
+        assert_eq!(dt.minute, 0);
+        assert_eq!(dt.second, 0);
+        assert_eq!(dt.year, 2026);
+    }
+
+    #[test]
+    fn display_time_rejects_malformed_input() {
+        assert!("".parse::<DisplayTime>().is_err());
+        assert!("invalid".parse::<DisplayTime>().is_err());
+        assert!("Fri Apr 17 10:00 2026".parse::<DisplayTime>().is_err());
+    }
+
+    #[test]
+    fn display_time_formats_back_to_original() {
+        let original = "Fri Apr 17 10:00:00 2026";
+        let dt: DisplayTime = original.parse().unwrap();
+        assert_eq!(dt.to_string(), original);
+    }
+
+    #[test]
+    fn month_number_maps_all_abbreviations() {
+        assert_eq!(month_number("Jan"), Ok(1));
+        assert_eq!(month_number("Feb"), Ok(2));
+        assert_eq!(month_number("Mar"), Ok(3));
+        assert_eq!(month_number("Apr"), Ok(4));
+        assert_eq!(month_number("May"), Ok(5));
+        assert_eq!(month_number("Jun"), Ok(6));
+        assert_eq!(month_number("Jul"), Ok(7));
+        assert_eq!(month_number("Aug"), Ok(8));
+        assert_eq!(month_number("Sep"), Ok(9));
+        assert_eq!(month_number("Oct"), Ok(10));
+        assert_eq!(month_number("Nov"), Ok(11));
+        assert_eq!(month_number("Dec"), Ok(12));
+        assert_eq!(month_number("Foo"), Err(()));
+    }
+}
