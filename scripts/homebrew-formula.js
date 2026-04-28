@@ -56,12 +56,10 @@ function renderFormula({ version, darwinArm64Sha256, darwinX64Sha256 }) {
 
   depends_on :macos
 
-  on_arm do
+  if Hardware::CPU.arm?
     url "${releaseUrl(version, armArchive)}"
     sha256 "${darwinArm64Sha256}"
-  end
-
-  on_intel do
+  else
     url "${releaseUrl(version, x64Archive)}"
     sha256 "${darwinX64Sha256}"
   end

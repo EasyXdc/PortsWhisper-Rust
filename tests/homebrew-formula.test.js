@@ -26,6 +26,9 @@ test("homebrew formula uses versioned GitHub release URLs for both mac architect
     formula,
     /https:\/\/github\.com\/EasyXdc\/PortsWhisper-Rust\/releases\/download\/v0\.2\.3\/ports-rs-darwin-x64\.tar\.gz/,
   );
+  assert.match(formula, /if Hardware::CPU\.arm\?/);
+  assert.doesNotMatch(formula, /on_arm do/);
+  assert.doesNotMatch(formula, /on_intel do/);
   assert.match(formula, /sha256 "a{64}"/);
   assert.match(formula, /sha256 "b{64}"/);
   assert.match(formula, /bin\.install "ports"/);
