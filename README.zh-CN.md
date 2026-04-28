@@ -60,6 +60,17 @@ whoisonport
 
 如果未来需要体验预发布版本，再显式使用 `next` dist-tag。
 
+### Homebrew
+
+Homebrew tap 发布后可以这样安装：
+
+```bash
+brew tap EasyXdc/tap
+brew install ports-rs
+```
+
+release workflow 会自动生成 tap 使用的 formula 资产。维护说明见 [`docs/homebrew.md`](./docs/homebrew.md)。
+
 ### Cargo
 
 如果你已经安装了 Rust，并且希望从源码安装：
@@ -80,6 +91,8 @@ cargo install --path .
 - `ports-rs-darwin-x64.tar.gz`
 - `ports-rs-linux-x64.tar.gz`
 - `ports-rs-windows-x64.zip`
+- `ports-rs.rb`
+- `SHA256SUMS`
 
 每个压缩包内包含：
 

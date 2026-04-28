@@ -10,13 +10,14 @@
 
 - GitHub Actions release workflow
 - Release 资产命名与上传规则
+- Homebrew formula 与 checksum 辅助资产生成
 - 多平台构建矩阵
 - Release checklist 文档结构
 
 本设计不覆盖：
 
 - 自动 npm 发布
-- 签名、公证、checksum 发布自动化
+- 签名、公证
 - Linux arm64 / Windows arm64 扩展
 
 ## Workflow Strategy
@@ -53,6 +54,8 @@ GitHub Release 最终资产名固定为：
 - `ports-rs-darwin-x64.tar.gz`
 - `ports-rs-linux-x64.tar.gz`
 - `ports-rs-windows-x64.zip`
+- `ports-rs.rb`
+- `SHA256SUMS`
 
 压缩包内容要求：
 
@@ -67,7 +70,8 @@ GitHub Release 最终资产名固定为：
 
 1. 下载所有 workflow artifacts
 2. 创建或更新对应 tag 的 GitHub Release
-3. 上传四个平台资产
+3. 生成 Homebrew formula 与 SHA256SUMS
+4. 上传四个平台资产与辅助资产
 
 发布动作只负责 GitHub Release，不负责 npm。
 

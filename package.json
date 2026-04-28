@@ -22,7 +22,8 @@
   ],
   "scripts": {
     "postinstall": "node scripts/postinstall.js",
-    "verify:release": "node scripts/verify-release.js"
+    "verify:release": "node scripts/verify-release.js",
+    "homebrew:formula": "node scripts/homebrew-formula.js"
   },
   "engines": {
     "node": ">=18"
