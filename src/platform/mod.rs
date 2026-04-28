@@ -7,7 +7,7 @@ use crate::util::run_output;
 use crate::util::{basename, run_output_with_c_locale};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-#[cfg(any(unix, target_os = "windows"))]
+#[cfg(unix)]
 use std::process::Command;
 use std::time::Duration;
 
@@ -498,7 +498,7 @@ fn windows_listening_ports_raw() -> Vec<RawPortEntry> {
         [
             "-NoProfile",
             "-Command",
-            "Get-NetTCPConnection -State Listen | Sort-Object LocalPort | ForEach-Object { $name = (Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue).ProcessName; if ($name) { \"{0} {1} {2}\" -f $_.LocalPort, $_.OwningProcess, $name } else { \"{0} {1}\" -f $_.LocalPort, $_.OwningProcess } }",
+            "$names=@{}; Get-Process | ForEach-Object { $names[[int]$_.Id]=$_.ProcessName }; Get-NetTCPConnection -State Listen | Sort-Object LocalPort | ForEach-Object { $name = $names[[int]$_.OwningProcess]; if ($name) { \"{0} {1} {2}\" -f $_.LocalPort, $_.OwningProcess, $name } else { \"{0} {1}\" -f $_.LocalPort, $_.OwningProcess } }",
         ],
         Some(Duration::from_millis(10_000)),
     ));
@@ -575,7 +575,7 @@ fn windows_netstat_listening_ports_from_output(raw: String) -> Vec<RawPortEntry>
         entries.push(RawPortEntry {
             port,
             pid,
-            process_name: windows_process_name(pid).unwrap_or_else(|| "unknown".to_string()),
+            process_name: "unknown".to_string(),
         });
     }
     entries
@@ -667,22 +667,15 @@ fn unix_process_details_from_result(
 
 #[cfg(target_os = "windows")]
 fn windows_batch_process_info(pids: &[u32]) -> HashMap<u32, RawProcessDetails> {
-    let mut map = HashMap::new();
-    for pid in pids {
-        let name = windows_process_name(*pid).unwrap_or_else(|| "unknown".to_string());
-        map.insert(
-            *pid,
-            RawProcessDetails {
-                pid: *pid,
-                ppid: None,
-                stat: "S".to_string(),
-                rss_kb: 0,
-                lstart: None,
-                command: name,
-            },
-        );
-    }
-    map
+    let Some(command) = windows_batch_process_info_command(pids) else {
+        return HashMap::new();
+    };
+    let raw = degrade_command_output(run_output(
+        "powershell",
+        ["-NoProfile", "-Command", &command],
+        Some(Duration::from_millis(5_000)),
+    ));
+    windows_batch_process_info_from_output(&raw)
 }
 
 #[cfg(target_os = "macos")]
@@ -741,25 +734,100 @@ where
 
 #[cfg(target_os = "windows")]
 fn windows_batch_cwd(pids: &[u32]) -> HashMap<u32, PathBuf> {
-    let mut map = HashMap::new();
-    for pid in pids {
-        let command = Command::new("powershell")
-            .args([
-                "-NoProfile",
-                "-Command",
-                &format!("(Get-Process -Id {pid} -ErrorAction SilentlyContinue).Path | Split-Path"),
-            ])
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
-            .output();
+    let Some(command) = windows_batch_cwd_command(pids) else {
+        return HashMap::new();
+    };
+    let raw = degrade_command_output(run_output(
+        "powershell",
+        ["-NoProfile", "-Command", &command],
+        Some(Duration::from_millis(5_000)),
+    ));
+    windows_batch_cwd_from_output(&raw)
+}
 
-        if let Ok(output) = command {
-            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !path.is_empty() {
-                map.insert(*pid, PathBuf::from(path));
-            }
-        }
+#[cfg(any(target_os = "windows", test))]
+fn windows_powershell_id_array(pids: &[u32]) -> Option<String> {
+    let mut ids = pids
+        .iter()
+        .copied()
+        .filter(|pid| *pid > 0)
+        .collect::<Vec<_>>();
+    ids.sort_unstable();
+    ids.dedup();
+    if ids.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "@({})",
+        ids.iter().map(u32::to_string).collect::<Vec<_>>().join(",")
+    ))
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn windows_batch_process_info_command(pids: &[u32]) -> Option<String> {
+    let ids = windows_powershell_id_array(pids)?;
+    Some(format!(
+        "$ids={ids}; Get-Process -Id $ids -ErrorAction SilentlyContinue | ForEach-Object {{ $cmd = if ($_.Path) {{ $_.Path }} else {{ $_.ProcessName }}; \"{{0}}`t{{1}}`t{{2}}\" -f $_.Id, [int64]($_.WorkingSet64 / 1KB), $cmd }}"
+    ))
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn windows_batch_process_info_from_output(raw: &str) -> HashMap<u32, RawProcessDetails> {
+    let mut map = HashMap::new();
+    for line in raw.lines() {
+        let mut parts = line.splitn(3, '\t');
+        let Some(pid) = parts.next().and_then(|value| value.parse::<u32>().ok()) else {
+            continue;
+        };
+        let rss_kb = parts
+            .next()
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(0);
+        let command = parts
+            .next()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or("unknown")
+            .trim()
+            .to_string();
+        map.insert(
+            pid,
+            RawProcessDetails {
+                pid,
+                ppid: None,
+                stat: "S".to_string(),
+                rss_kb,
+                lstart: None,
+                command,
+            },
+        );
+    }
+    map
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn windows_batch_cwd_command(pids: &[u32]) -> Option<String> {
+    let ids = windows_powershell_id_array(pids)?;
+    Some(format!(
+        "$ids={ids}; Get-Process -Id $ids -ErrorAction SilentlyContinue | ForEach-Object {{ if ($_.Path) {{ $dir=[System.IO.Path]::GetDirectoryName($_.Path); if ($dir) {{ \"{{0}}`t{{1}}\" -f $_.Id, $dir }} }} }}"
+    ))
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn windows_batch_cwd_from_output(raw: &str) -> HashMap<u32, PathBuf> {
+    let mut map = HashMap::new();
+    for line in raw.lines() {
+        let mut parts = line.splitn(2, '\t');
+        let Some(pid) = parts.next().and_then(|value| value.parse::<u32>().ok()) else {
+            continue;
+        };
+        let Some(path) = parts
+            .next()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            continue;
+        };
+        map.insert(pid, PathBuf::from(path));
     }
     map
 }
@@ -1061,6 +1129,10 @@ mod tests {
     use super::{darwin_listening_ports_from_result, unix_process_details_from_result};
     #[cfg(target_os = "linux")]
     use super::{linux_batch_cwd_with, linux_proc_details_with};
+    use super::{
+        windows_batch_cwd_command, windows_batch_cwd_from_output,
+        windows_batch_process_info_command, windows_batch_process_info_from_output,
+    };
     #[cfg(unix)]
     use crate::error::PortError;
     #[cfg(target_os = "linux")]
@@ -1230,5 +1302,48 @@ mod tests {
         assert_eq!(entries[1].port, 8080);
         assert_eq!(entries[1].pid, 7);
         assert_eq!(entries[1].process_name, "unknown");
+    }
+
+    #[test]
+    fn windows_batch_process_info_parses_tab_delimited_rows() {
+        let raw = "42\t12000\tC:\\Projects\\app\\node.exe\nbad\trow\n7\t0\tpwsh\n";
+
+        let details = windows_batch_process_info_from_output(raw);
+
+        assert_eq!(details.len(), 2);
+        assert_eq!(details.get(&42).map(|detail| detail.rss_kb), Some(12_000));
+        assert_eq!(
+            details.get(&42).map(|detail| detail.command.as_str()),
+            Some("C:\\Projects\\app\\node.exe")
+        );
+        assert_eq!(
+            details.get(&7).map(|detail| detail.command.as_str()),
+            Some("pwsh")
+        );
+    }
+
+    #[test]
+    fn windows_batch_cwd_parses_tab_delimited_rows() {
+        let raw = "42\tC:\\Projects\\app\ninvalid\n7\tC:\\Windows\\System32\n";
+
+        let cwd = windows_batch_cwd_from_output(raw);
+
+        assert_eq!(cwd.len(), 2);
+        assert_eq!(
+            cwd.get(&42).map(|path| path.to_string_lossy().to_string()),
+            Some("C:\\Projects\\app".to_string())
+        );
+    }
+
+    #[test]
+    fn windows_batch_commands_dedupe_pids_and_use_one_process_query() {
+        let info_command =
+            windows_batch_process_info_command(&[42, 7, 42]).expect("command should be built");
+        let cwd_command = windows_batch_cwd_command(&[42, 7, 42]).expect("command should be built");
+
+        assert!(info_command.contains("$ids=@(7,42); Get-Process -Id $ids"));
+        assert!(cwd_command.contains("$ids=@(7,42); Get-Process -Id $ids"));
+        assert!(windows_batch_process_info_command(&[]).is_none());
+        assert!(windows_batch_cwd_command(&[]).is_none());
     }
 }
