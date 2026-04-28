@@ -9,8 +9,7 @@ https://github.com/EasyXdc/homebrew-tap
 Users install it as:
 
 ```sh
-brew tap EasyXdc/tap
-brew install ports-rs
+brew install EasyXdc/tap/ports-rs
 ```
 
 This project publishes macOS release archives consumed by that tap:
@@ -26,8 +25,7 @@ Release automation generates two helper assets:
 ## User Install Command
 
 ```sh
-brew tap EasyXdc/tap
-brew install ports-rs
+brew install EasyXdc/tap/ports-rs
 ```
 
 This installs:

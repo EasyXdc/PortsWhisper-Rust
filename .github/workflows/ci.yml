@@ -52,6 +52,9 @@ jobs:
         with:
           node-version: 20
 
+      - name: Run Node tests
+        run: npm test
+
       - name: Pack npm tarball
         run: npm pack
 

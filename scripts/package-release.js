@@ -50,32 +50,47 @@ function buildArchiveCommand(target, archivePath, stageDir) {
   };
 }
 
-function main() {
-  const target = RELEASE_TARGETS[TARGET];
+function packageRelease({
+  root = ROOT,
+  targetKey = TARGET,
+  makeTempDir = fs.mkdtempSync,
+  runCommand = run,
+  log = console.log,
+} = {}) {
+  const target = RELEASE_TARGETS[targetKey];
   if (!target) {
-    fail(`unsupported packaging target ${TARGET}`);
+    fail(`unsupported packaging target ${targetKey}`);
   }
 
-  fs.mkdirSync(DIST, { recursive: true });
+  const dist = path.join(root, "dist");
+  fs.mkdirSync(dist, { recursive: true });
 
-  const releaseDir = path.join(ROOT, "target", "release");
-  const stageDir = fs.mkdtempSync(path.join(os.tmpdir(), `ports-rs-${TARGET}-`));
+  const releaseDir = path.join(root, "target", "release");
+  const stageDir = makeTempDir(path.join(os.tmpdir(), `ports-rs-${targetKey}-`));
 
-  for (const binary of target.binaries) {
-    const source = path.join(releaseDir, binary);
-    ensureExists(source);
-    fs.copyFileSync(source, path.join(stageDir, binary));
+  try {
+    for (const binary of target.binaries) {
+      const source = path.join(releaseDir, binary);
+      ensureExists(source);
+      fs.copyFileSync(source, path.join(stageDir, binary));
+    }
+
+    const archivePath = path.join(dist, target.archive);
+    if (fs.existsSync(archivePath)) {
+      fs.rmSync(archivePath, { force: true });
+    }
+
+    const archiveCommand = buildArchiveCommand(target, archivePath, stageDir);
+    runCommand(archiveCommand.command, archiveCommand.args);
+
+    log(archivePath);
+  } finally {
+    fs.rmSync(stageDir, { recursive: true, force: true });
   }
+}
 
-  const archivePath = path.join(DIST, target.archive);
-  if (fs.existsSync(archivePath)) {
-    fs.rmSync(archivePath, { force: true });
-  }
-
-  const archiveCommand = buildArchiveCommand(target, archivePath, stageDir);
-  run(archiveCommand.command, archiveCommand.args);
-
-  console.log(archivePath);
+function main() {
+  packageRelease();
 }
 
 if (require.main === module) {
@@ -85,4 +100,5 @@ if (require.main === module) {
 module.exports = {
   TARGETS: RELEASE_TARGETS,
   buildArchiveCommand,
+  packageRelease,
 };

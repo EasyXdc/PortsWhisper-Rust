@@ -16,7 +16,7 @@
 本文档不覆盖：
 
 - 具体实现 PR 的代码 diff
-- release 流程调整（见 `release-workflow-design.md`）
+- release 流程调整（见 `release-checklist.md`）
 - 商业化 / 品牌 / 网站相关工作
 
 ## Repo Snapshot
@@ -25,7 +25,7 @@
 - 跨平台：`src/platform/{macos,linux,windows}.rs` + `src/platform/mod.rs`（871 行为最大单模块之一）
 - 打包侧：Node.js `scripts/*.js` + `bin/*.js`，npm 包 `ports-rs`
 - 发布：GitHub Actions `release.yml` 由 `v*` tag 触发多平台构建
-- CI：`.github/workflows/ci.yml` 当前仅执行 `cargo test` + `npm pack` + postinstall skip 验证
+- CI：`.github/workflows/ci.yml` 执行 `cargo fmt --check`、`cargo clippy -- -D warnings`、`cargo test`、`npm test`、`npm pack` 与 postinstall skip 验证
 - 外部依赖：仅 `unicode-width`，几乎零运行时依赖
 
 ## Assessment
@@ -188,7 +188,7 @@
 显式排除，避免 scope 膨胀：
 
 - **F11 `ports history`**：需常驻 daemon，改动面大，推迟到 v0.3 之后再立项
-- **自动 npm publish**：发布链路设计中已明确保持手动（见 `release-workflow-design.md`）
+- **自动 npm publish**：已由 release workflow 的 `publish-npm` job 处理，并通过 `npm-publish` environment 保留人工审批门禁
 - **新增平台**（Linux arm64 / Windows arm64）：与本轮优化正交
 - **GUI / 菜单栏 App**：定位依然是 CLI，本轮不偏离终端工具边界
 - **云端 / 远程端口查询**：越界

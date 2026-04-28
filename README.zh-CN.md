@@ -65,8 +65,7 @@ whoisonport
 macOS 用户可以通过项目的 Homebrew tap 安装：
 
 ```bash
-brew tap EasyXdc/tap
-brew install ports-rs
+brew install EasyXdc/tap/ports-rs
 ```
 
 这会安装两个命令：
@@ -106,7 +105,7 @@ cargo install --path .
 - `ports-rs-linux-x64.tar.gz`
 - `ports-rs-windows-x64.zip`
 - `ports-rs.rb`
-- `SHA256SUMS`
+- `SHA256SUMS`，npm 安装器会用它校验下载压缩包的 checksum
 
 每个压缩包内包含：
 
@@ -387,7 +386,12 @@ ports --all
 
 ```bash
 cargo build
+cargo fmt --check
+cargo clippy -- -D warnings
 cargo test
+npm test
+npm pack
+PORTS_RS_SKIP_DOWNLOAD=1 node scripts/postinstall.js
 ```
 
 本地运行：

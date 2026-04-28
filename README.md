@@ -65,8 +65,7 @@ If you want to test a future prerelease build later, use the `next` dist-tag exp
 On macOS, install from the project Homebrew tap:
 
 ```bash
-brew tap EasyXdc/tap
-brew install ports-rs
+brew install EasyXdc/tap/ports-rs
 ```
 
 This installs both commands:
@@ -106,7 +105,7 @@ Current asset naming:
 - `ports-rs-linux-x64.tar.gz`
 - `ports-rs-windows-x64.zip`
 - `ports-rs.rb`
-- `SHA256SUMS`
+- `SHA256SUMS` used by the npm installer to verify downloaded archive checksums
 
 Each archive contains:
 
@@ -387,7 +386,12 @@ to see everything.
 
 ```bash
 cargo build
+cargo fmt --check
+cargo clippy -- -D warnings
 cargo test
+npm test
+npm pack
+PORTS_RS_SKIP_DOWNLOAD=1 node scripts/postinstall.js
 ```
 
 Run locally:

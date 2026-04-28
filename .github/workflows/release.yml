@@ -40,6 +40,9 @@ jobs:
       - name: Run Rust tests
         run: cargo test
 
+      - name: Run Node tests
+        run: npm test
+
       - name: Pack npm tarball
         run: npm pack
 

@@ -1,7 +1,10 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 
-const { buildArchiveCommand } = require("../scripts/package-release.js");
+const { buildArchiveCommand, packageRelease } = require("../scripts/package-release.js");
 const { RELEASE_TARGETS } = require("../scripts/release-targets.js");
 
 test("win32-x64 packaging uses powershell compress-archive", () => {
@@ -34,4 +37,68 @@ test("unix packaging uses tar gz command", () => {
     "ports",
     "whoisonport",
   ]);
+});
+
+test("package release removes temporary staging directory after archiving", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ports-rs-package-test-"));
+  const releaseDir = path.join(root, "target", "release");
+  fs.mkdirSync(releaseDir, { recursive: true });
+  fs.writeFileSync(path.join(releaseDir, "ports"), "ports");
+  fs.writeFileSync(path.join(releaseDir, "whoisonport"), "whoisonport");
+
+  let stagedDirectory;
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ports-rs-stage-root-"));
+
+  try {
+    packageRelease({
+      root,
+      targetKey: "darwin-arm64",
+      makeTempDir(prefix) {
+        stagedDirectory = fs.mkdtempSync(path.join(tempRoot, path.basename(prefix)));
+        return stagedDirectory;
+      },
+      runCommand() {},
+      log() {},
+    });
+
+    assert.equal(fs.existsSync(stagedDirectory), false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("package release removes temporary staging directory after archive failure", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ports-rs-package-test-"));
+  const releaseDir = path.join(root, "target", "release");
+  fs.mkdirSync(releaseDir, { recursive: true });
+  fs.writeFileSync(path.join(releaseDir, "ports"), "ports");
+  fs.writeFileSync(path.join(releaseDir, "whoisonport"), "whoisonport");
+
+  let stagedDirectory;
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ports-rs-stage-root-"));
+
+  try {
+    assert.throws(
+      () =>
+        packageRelease({
+          root,
+          targetKey: "darwin-arm64",
+          makeTempDir(prefix) {
+            stagedDirectory = fs.mkdtempSync(path.join(tempRoot, path.basename(prefix)));
+            return stagedDirectory;
+          },
+          runCommand() {
+            throw new Error("archive failed");
+          },
+          log() {},
+        }),
+      /archive failed/
+    );
+
+    assert.equal(fs.existsSync(stagedDirectory), false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
 });

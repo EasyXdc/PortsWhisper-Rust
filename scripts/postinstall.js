@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
 const https = require("node:https");
+const crypto = require("node:crypto");
 const { spawnSync } = require("node:child_process");
 const {
   releaseTargetForPlatform,
@@ -85,6 +86,23 @@ function download(url, destination) {
   });
 }
 
+function expectedSha256FromSums(contents, archiveName) {
+  for (const line of contents.split(/\r?\n/)) {
+    const match = line.match(/^([a-fA-F0-9]{64})\s+\*?(.+)$/);
+    if (match && path.basename(match[2].trim()) === archiveName) {
+      return match[1].toLowerCase();
+    }
+  }
+  throw new Error(`SHA256SUMS did not contain ${archiveName}`);
+}
+
+function verifyArchiveChecksum(archivePath, expectedSha256) {
+  const actualSha256 = crypto.createHash("sha256").update(fs.readFileSync(archivePath)).digest("hex");
+  if (actualSha256 !== expectedSha256.toLowerCase()) {
+    throw new Error(`checksum mismatch for ${path.basename(archivePath)}`);
+  }
+}
+
 function extractTarGz(archivePath) {
   const result = spawnSync("tar", ["-xzf", archivePath, "-C", VENDOR_DIR], { stdio: "inherit" });
   if (result.status !== 0) {
@@ -136,10 +154,15 @@ async function main() {
 
   ensureDir(VENDOR_DIR);
   const archivePath = path.join(os.tmpdir(), target.archive);
+  const checksumsPath = path.join(os.tmpdir(), `ports-rs-${defaultReleaseTag()}-SHA256SUMS`);
   const assetUrl = `${defaultBaseUrl()}/${target.archive}`;
+  const checksumsUrl = `${defaultBaseUrl()}/SHA256SUMS`;
 
   try {
     await download(assetUrl, archivePath);
+    await download(checksumsUrl, checksumsPath);
+    const expectedSha256 = expectedSha256FromSums(fs.readFileSync(checksumsPath, "utf8"), target.archive);
+    verifyArchiveChecksum(archivePath, expectedSha256);
   } catch (error) {
     fail(error.message);
   }
@@ -169,5 +192,7 @@ module.exports = {
   buildZipExtractCommand,
   defaultBaseUrl,
   defaultReleaseTag,
+  expectedSha256FromSums,
   packageVersion,
+  verifyArchiveChecksum,
 };

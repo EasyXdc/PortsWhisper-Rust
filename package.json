@@ -21,6 +21,7 @@
     "README.zh-CN.md"
   ],
   "scripts": {
+    "test": "node --test tests/*.test.js",
     "postinstall": "node scripts/postinstall.js",
     "verify:release": "node scripts/verify-release.js",
     "homebrew:formula": "node scripts/homebrew-formula.js"
