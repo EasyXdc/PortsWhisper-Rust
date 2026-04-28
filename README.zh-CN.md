@@ -79,7 +79,7 @@ whoisonport
 
 ```bash
 brew update
-brew upgrade ports-rs
+brew upgrade EasyXdc/tap/ports-rs
 ```
 
 tap 维护说明见 [`docs/homebrew.md`](./docs/homebrew.md)。

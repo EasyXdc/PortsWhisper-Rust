@@ -79,7 +79,7 @@ To upgrade later:
 
 ```bash
 brew update
-brew upgrade ports-rs
+brew upgrade EasyXdc/tap/ports-rs
 ```
 
 Tap maintenance notes live in [`docs/homebrew.md`](./docs/homebrew.md).
