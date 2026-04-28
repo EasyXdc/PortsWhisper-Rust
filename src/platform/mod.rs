@@ -122,6 +122,10 @@ pub fn listening_ports_raw() -> Vec<RawPortEntry> {
     native_scanner().get_listening_ports_raw()
 }
 
+pub fn listening_port_raw(port: u16) -> Option<RawPortEntry> {
+    native_scanner().get_listening_port_raw(port)
+}
+
 pub fn batch_process_info(pids: &[u32]) -> HashMap<u32, RawProcessDetails> {
     native_scanner().batch_process_info(pids)
 }
@@ -513,6 +517,26 @@ fn windows_listening_ports_raw() -> Vec<RawPortEntry> {
         Some(Duration::from_millis(10_000)),
     ));
     windows_netstat_listening_ports_from_output(raw)
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn windows_listening_port_raw(port: u16) -> Option<RawPortEntry> {
+    let command = windows_single_port_command(port);
+    let raw = degrade_command_output(run_output(
+        "powershell",
+        ["-NoProfile", "-Command", &command],
+        Some(Duration::from_millis(5_000)),
+    ));
+    windows_powershell_listening_ports_from_output(raw)
+        .into_iter()
+        .find(|entry| entry.port == port)
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn windows_single_port_command(port: u16) -> String {
+    format!(
+        "$connections=Get-NetTCPConnection -State Listen -LocalPort {port} -ErrorAction SilentlyContinue | Sort-Object LocalPort; foreach ($c in $connections) {{ $name=(Get-Process -Id $c.OwningProcess -ErrorAction SilentlyContinue).ProcessName; if ($name) {{ \"{{0}} {{1}} {{2}}\" -f $c.LocalPort, $c.OwningProcess, $name }} else {{ \"{{0}} {{1}}\" -f $c.LocalPort, $c.OwningProcess }} }}"
+    )
 }
 
 #[cfg(any(target_os = "windows", test))]
@@ -1132,6 +1156,7 @@ mod tests {
     use super::{
         windows_batch_cwd_command, windows_batch_cwd_from_output,
         windows_batch_process_info_command, windows_batch_process_info_from_output,
+        windows_single_port_command,
     };
     #[cfg(unix)]
     use crate::error::PortError;
@@ -1302,6 +1327,14 @@ mod tests {
         assert_eq!(entries[1].port, 8080);
         assert_eq!(entries[1].pid, 7);
         assert_eq!(entries[1].process_name, "unknown");
+    }
+
+    #[test]
+    fn windows_single_port_command_filters_by_local_port() {
+        let command = windows_single_port_command(3000);
+
+        assert!(command.contains("Get-NetTCPConnection -State Listen -LocalPort 3000"));
+        assert!(command.contains("Get-Process -Id $c.OwningProcess"));
     }
 
     #[test]

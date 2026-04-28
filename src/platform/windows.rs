@@ -1,6 +1,6 @@
 use super::{
     PlatformScanner, windows_all_processes_raw, windows_batch_cwd, windows_batch_process_info,
-    windows_listening_ports_raw, windows_process_name,
+    windows_listening_port_raw, windows_listening_ports_raw, windows_process_name,
 };
 use crate::logs;
 use crate::model::{LogFile, ProcessTreeNode, RawPortEntry, RawProcessDetails, RawProcessEntry};
@@ -12,6 +12,10 @@ pub struct WindowsScanner;
 impl PlatformScanner for WindowsScanner {
     fn get_listening_ports_raw(&self) -> Vec<RawPortEntry> {
         windows_listening_ports_raw()
+    }
+
+    fn get_listening_port_raw(&self, port: u16) -> Option<RawPortEntry> {
+        windows_listening_port_raw(port)
     }
 
     fn batch_process_info(&self, pids: &[u32]) -> HashMap<u32, RawProcessDetails> {

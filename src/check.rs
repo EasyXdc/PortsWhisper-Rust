@@ -1,5 +1,5 @@
 use crate::json_output;
-use crate::platform;
+use crate::platform::{self, PlatformScanner};
 use serde::Serialize;
 use std::collections::HashSet;
 
@@ -37,10 +37,27 @@ pub fn check_payload(results: &[PortCheckResult]) -> CheckPayload {
 }
 
 pub fn check_ports(ports: &[u16]) -> Vec<PortCheckResult> {
-    let occupied: HashSet<u16> = platform::listening_ports_raw()
-        .into_iter()
-        .map(|entry| entry.port)
-        .collect();
+    check_ports_with(platform::native_scanner(), ports)
+}
+
+fn check_ports_with(scanner: &dyn PlatformScanner, ports: &[u16]) -> Vec<PortCheckResult> {
+    let mut unique_ports = ports.to_vec();
+    unique_ports.sort_unstable();
+    unique_ports.dedup();
+
+    let occupied: HashSet<u16> = if unique_ports.len() <= TARGETED_CHECK_LIMIT {
+        unique_ports
+            .iter()
+            .filter_map(|port| scanner.get_listening_port_raw(*port))
+            .map(|entry| entry.port)
+            .collect()
+    } else {
+        scanner
+            .get_listening_ports_raw()
+            .into_iter()
+            .map(|entry| entry.port)
+            .collect()
+    };
 
     ports
         .iter()
@@ -55,6 +72,8 @@ pub fn check_ports(ports: &[u16]) -> Vec<PortCheckResult> {
         })
         .collect()
 }
+
+const TARGETED_CHECK_LIMIT: usize = 8;
 
 fn print_check_results(results: &[PortCheckResult]) {
     for result in results {
@@ -77,19 +96,43 @@ fn exit_code(results: &[PortCheckResult]) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{PortCheckResult, check_payload, check_ports};
+    use super::{
+        PortCheckResult, TARGETED_CHECK_LIMIT, check_payload, check_ports, check_ports_with,
+    };
     use crate::model::RawPortEntry;
     use crate::platform::PlatformScanner;
     use std::collections::HashMap;
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct CheckScanner {
         listening_ports: Vec<RawPortEntry>,
+        full_scans: AtomicUsize,
+        targeted_scans: AtomicUsize,
+    }
+
+    impl CheckScanner {
+        fn new(listening_ports: Vec<RawPortEntry>) -> Self {
+            Self {
+                listening_ports,
+                full_scans: AtomicUsize::new(0),
+                targeted_scans: AtomicUsize::new(0),
+            }
+        }
     }
 
     impl PlatformScanner for CheckScanner {
         fn get_listening_ports_raw(&self) -> Vec<RawPortEntry> {
+            self.full_scans.fetch_add(1, Ordering::SeqCst);
             self.listening_ports.clone()
+        }
+
+        fn get_listening_port_raw(&self, port: u16) -> Option<RawPortEntry> {
+            self.targeted_scans.fetch_add(1, Ordering::SeqCst);
+            self.listening_ports
+                .iter()
+                .find(|entry| entry.port == port)
+                .cloned()
         }
 
         fn batch_process_info(
@@ -128,36 +171,13 @@ mod tests {
         }
     }
 
-    fn check_ports_with(scanner: &dyn PlatformScanner, ports: &[u16]) -> Vec<PortCheckResult> {
-        let occupied: std::collections::HashSet<u16> = scanner
-            .get_listening_ports_raw()
-            .into_iter()
-            .map(|entry| entry.port)
-            .collect();
-
-        ports
-            .iter()
-            .copied()
-            .map(|port| {
-                let port_occupied = occupied.contains(&port);
-                PortCheckResult {
-                    port,
-                    available: !port_occupied,
-                    occupied: port_occupied,
-                }
-            })
-            .collect()
-    }
-
     #[test]
     fn marks_ports_as_available_or_occupied() {
-        let scanner = CheckScanner {
-            listening_ports: vec![RawPortEntry {
-                port: 3000,
-                pid: 42,
-                process_name: "node".to_string(),
-            }],
-        };
+        let scanner = CheckScanner::new(vec![RawPortEntry {
+            port: 3000,
+            pid: 42,
+            process_name: "node".to_string(),
+        }]);
 
         assert_eq!(
             check_ports_with(&scanner, &[3000, 5173]),
@@ -174,6 +194,38 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn small_check_uses_targeted_port_lookups() {
+        let scanner = CheckScanner::new(vec![RawPortEntry {
+            port: 3000,
+            pid: 42,
+            process_name: "node".to_string(),
+        }]);
+
+        let results = check_ports_with(&scanner, &[3000, 3000, 5173]);
+
+        assert!(results[0].occupied);
+        assert!(results[1].occupied);
+        assert!(!results[2].occupied);
+        assert_eq!(scanner.full_scans.load(Ordering::SeqCst), 0);
+        assert_eq!(scanner.targeted_scans.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn large_check_uses_single_full_scan() {
+        let scanner = CheckScanner::new(vec![RawPortEntry {
+            port: 3000,
+            pid: 42,
+            process_name: "node".to_string(),
+        }]);
+        let ports = (1..=(TARGETED_CHECK_LIMIT as u16 + 1)).collect::<Vec<_>>();
+
+        let _ = check_ports_with(&scanner, &ports);
+
+        assert_eq!(scanner.full_scans.load(Ordering::SeqCst), 1);
+        assert_eq!(scanner.targeted_scans.load(Ordering::SeqCst), 0);
     }
 
     #[test]
