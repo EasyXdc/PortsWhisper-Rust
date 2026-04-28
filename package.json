@@ -1,6 +1,6 @@
 {
   "name": "ports-rs",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Rust-powered CLI for inspecting and managing listening ports",
   "license": "MIT",
   "repository": {
