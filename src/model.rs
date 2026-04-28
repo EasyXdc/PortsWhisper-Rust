@@ -1,6 +1,37 @@
 use std::path::PathBuf;
 use std::{fmt, str::FromStr};
 
+/// Maximum valid TCP port number.
+pub const MAX_PORT: u32 = 65_535;
+
+/// Returns true if `n` is in the valid TCP port range (1–65535).
+pub fn is_likely_port(n: u32) -> bool {
+    (1..=MAX_PORT).contains(&n)
+}
+
+/// Returns true if `s` contains only shell-safe characters (no `$`, backticks, `!`, `;`, `|`, `&`, parentheses, or newlines).
+pub fn is_shell_safe(s: &str) -> bool {
+    !s.chars().any(|c| {
+        matches!(
+            c,
+            '$' | '`'
+                | '!'
+                | ';'
+                | '|'
+                | '&'
+                | '('
+                | ')'
+                | '<'
+                | '>'
+                | '"'
+                | '\\'
+                | '%'
+                | '\n'
+                | '\r'
+        )
+    })
+}
+
 /// Runtime health classification for a listener process.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProcessStatus {
@@ -26,7 +57,7 @@ impl ProcessStatus {
 }
 
 /// A single node in a process ancestry chain.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ProcessTreeNode {
     pub pid: u32,
     pub ppid: Option<u32>,
@@ -34,7 +65,7 @@ pub struct ProcessTreeNode {
 }
 
 /// Parsed representation of a process start timestamp.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct DisplayTime {
     pub weekday: String,
     pub month_name: String,
@@ -81,7 +112,7 @@ impl FromStr for DisplayTime {
     }
 }
 
-fn month_number(name: &str) -> Result<u8, ()> {
+pub(crate) fn month_number(name: &str) -> Result<u8, ()> {
     match name {
         "Jan" => Ok(1),
         "Feb" => Ok(2),
@@ -100,7 +131,7 @@ fn month_number(name: &str) -> Result<u8, ()> {
 }
 
 /// Complete metadata for a process listening on a TCP port.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PortInfo {
     pub port: u16,
     pub pid: u32,
@@ -119,7 +150,7 @@ pub struct PortInfo {
 }
 
 /// Metadata for a running process in the dev-process table.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ProcessInfo {
     pub pid: u32,
     pub ppid: Option<u32>,
@@ -179,7 +210,7 @@ pub struct KillTargetResolution {
 }
 
 /// Minimal data returned by the platform port scanner before enrichment.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct RawPortEntry {
     pub port: u16,
     pub pid: u32,
@@ -207,6 +238,12 @@ pub struct RawProcessEntry {
     pub rss_kb: u64,
     pub lstart: Option<String>,
     pub command: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TailCommand {
+    PowerShell { command: String },
+    Argv(Vec<String>),
 }
 
 #[cfg(test)]
@@ -263,5 +300,28 @@ mod tests {
         assert_eq!(month_number("Nov"), Ok(11));
         assert_eq!(month_number("Dec"), Ok(12));
         assert_eq!(month_number("Foo"), Err(()));
+    }
+
+    #[test]
+    fn is_likely_port_rejects_zero() {
+        assert!(!is_likely_port(0));
+        assert!(is_likely_port(1));
+        assert!(is_likely_port(80));
+        assert!(is_likely_port(65_535));
+        assert!(!is_likely_port(65_536));
+    }
+
+    #[test]
+    fn is_shell_safe_rejects_metacharacters() {
+        assert!(is_shell_safe("1h"));
+        assert!(is_shell_safe("2024-01-01 10:00:00"));
+        assert!(!is_shell_safe("$(rm -rf /)"));
+        assert!(!is_shell_safe("`whoami`"));
+        assert!(!is_shell_safe("1h; rm -rf /"));
+        assert!(!is_shell_safe("1h|cat /etc/passwd"));
+        assert!(!is_shell_safe("$HOME"));
+        assert!(!is_shell_safe("test\"injection"));
+        assert!(!is_shell_safe("path\\with\\backslash"));
+        assert!(!is_shell_safe("100%"));
     }
 }

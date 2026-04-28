@@ -771,7 +771,7 @@ fn push_border(
 }
 
 fn visible_len(s: &str) -> usize {
-    let mut visible = String::new();
+    let mut width = 0;
     let mut esc = false;
     for ch in s.chars() {
         if esc {
@@ -784,9 +784,9 @@ fn visible_len(s: &str) -> usize {
             esc = true;
             continue;
         }
-        visible.push(ch);
+        width += unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
     }
-    visible_width(&visible)
+    width
 }
 
 fn pad_to_width(s: &str, width: usize) -> String {

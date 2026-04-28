@@ -150,7 +150,10 @@ fn run_output_impl(
     });
 
     let status = match timeout {
-        Some(d) => match child.wait_timeout(d).map_err(PortError::Io)? {
+        Some(d) => match child
+            .wait_timeout(d)
+            .map_err(|e| PortError::Io(std::sync::Arc::new(e)))?
+        {
             Some(s) => s,
             None => {
                 let _ = child.kill();
@@ -161,7 +164,9 @@ fn run_output_impl(
                 });
             }
         },
-        None => child.wait().map_err(PortError::Io)?,
+        None => child
+            .wait()
+            .map_err(|e| PortError::Io(std::sync::Arc::new(e)))?,
     };
 
     let stdout = stdout_reader.join().unwrap_or_default();
@@ -184,7 +189,7 @@ fn classify_spawn_error(e: std::io::Error, program: &str) -> PortError {
     match e.kind() {
         std::io::ErrorKind::NotFound => PortError::CommandMissing(program.to_string()),
         std::io::ErrorKind::PermissionDenied => PortError::PermissionDenied(program.to_string()),
-        _ => PortError::Io(e),
+        _ => PortError::Io(std::sync::Arc::new(e)),
     }
 }
 
@@ -249,21 +254,7 @@ fn parse_ps_lstart(label: &str) -> Option<i64> {
         [mon, day, time, year] => (*mon, *day, *time, *year),
         _ => return None,
     };
-    let month = match mon {
-        "Jan" => 1,
-        "Feb" => 2,
-        "Mar" => 3,
-        "Apr" => 4,
-        "May" => 5,
-        "Jun" => 6,
-        "Jul" => 7,
-        "Aug" => 8,
-        "Sep" => 9,
-        "Oct" => 10,
-        "Nov" => 11,
-        "Dec" => 12,
-        _ => return None,
-    };
+    let month = crate::model::month_number(mon).ok()? as i64;
     let day: i64 = day.parse().ok()?;
     let year: i64 = year.parse().ok()?;
     let t: Vec<i64> = time.split(':').filter_map(|v| v.parse().ok()).collect();
@@ -365,7 +356,6 @@ mod tests {
     use std::fs;
     #[cfg(unix)]
     use std::time::{Duration, Instant};
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn memory_format_uses_reference_thresholds() {
@@ -385,7 +375,7 @@ mod tests {
 
     #[test]
     fn project_root_walks_up_to_known_markers() {
-        let root = temp_dir("root");
+        let root = temp_project_dir("root");
         let nested = root.join("a/b/c");
         fs::create_dir_all(&nested).unwrap();
         fs::write(root.join("go.mod"), "module example\n").unwrap();
@@ -570,14 +560,5 @@ mod tests {
         drain_user_warnings();
     }
 
-    fn temp_dir(label: &str) -> std::path::PathBuf {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        std::env::temp_dir().join(format!(
-            "port-whisperer-{label}-{}-{nanos}",
-            std::process::id()
-        ))
-    }
+    use crate::test_support::temp_project_dir;
 }

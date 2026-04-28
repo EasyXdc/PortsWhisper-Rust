@@ -1,5 +1,5 @@
 /// Error variants for system command failures during port/process inspection.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum PortError {
     CommandMissing(String),
     PermissionDenied(String),
@@ -16,7 +16,7 @@ pub enum PortError {
         cmd: String,
         reason: String,
     },
-    Io(std::io::Error),
+    Io(std::sync::Arc<std::io::Error>),
 }
 
 impl PortError {
@@ -61,24 +61,33 @@ impl PortError {
 
 impl From<std::io::Error> for PortError {
     fn from(e: std::io::Error) -> Self {
-        Self::Io(e)
+        Self::Io(std::sync::Arc::new(e))
     }
 }
 
+impl std::fmt::Display for PortError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.full())
+    }
+}
+
+impl std::error::Error for PortError {}
+
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 static VERBOSE_ON: AtomicBool = AtomicBool::new(false);
 const VERBOSE_CAP: usize = 512;
 
-fn verbose_buf() -> &'static Mutex<Vec<String>> {
-    static B: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
-    B.get_or_init(|| Mutex::new(Vec::new()))
+fn verbose_buf() -> &'static Mutex<VecDeque<String>> {
+    static B: OnceLock<Mutex<VecDeque<String>>> = OnceLock::new();
+    B.get_or_init(|| Mutex::new(VecDeque::new()))
 }
 
-fn user_warning_buf() -> &'static Mutex<Vec<PortError>> {
-    static B: OnceLock<Mutex<Vec<PortError>>> = OnceLock::new();
-    B.get_or_init(|| Mutex::new(Vec::new()))
+fn user_warning_buf() -> &'static Mutex<VecDeque<PortError>> {
+    static B: OnceLock<Mutex<VecDeque<PortError>>> = OnceLock::new();
+    B.get_or_init(|| Mutex::new(VecDeque::new()))
 }
 
 pub fn set_verbose_enabled(on: bool) {
@@ -95,9 +104,9 @@ pub fn verbose_log(msg: impl Into<String>) {
     }
     if let Ok(mut buf) = verbose_buf().lock() {
         if buf.len() >= VERBOSE_CAP {
-            buf.remove(0);
+            buf.pop_front();
         }
-        buf.push(msg.into());
+        buf.push_back(msg.into());
     }
 }
 
@@ -107,38 +116,21 @@ pub fn verbose_log_port_error(e: &PortError) {
 
 pub fn record_user_warning(e: &PortError) {
     if let Ok(mut buf) = user_warning_buf().lock() {
-        buf.push(match e {
-            PortError::CommandMissing(cmd) => PortError::CommandMissing(cmd.clone()),
-            PortError::PermissionDenied(cmd) => PortError::PermissionDenied(cmd.clone()),
-            PortError::Timeout { cmd, ms } => PortError::Timeout {
-                cmd: cmd.clone(),
-                ms: *ms,
-            },
-            PortError::ExecFailed { cmd, exit, stderr } => PortError::ExecFailed {
-                cmd: cmd.clone(),
-                exit: *exit,
-                stderr: stderr.clone(),
-            },
-            PortError::ParseFailed { cmd, reason } => PortError::ParseFailed {
-                cmd: cmd.clone(),
-                reason: reason.clone(),
-            },
-            PortError::Io(io) => PortError::Io(std::io::Error::new(io.kind(), io.to_string())),
-        });
+        buf.push_back(e.clone());
     }
 }
 
 pub fn drain_user_warnings() -> Vec<PortError> {
     user_warning_buf()
         .lock()
-        .map(|mut buf| std::mem::take(&mut *buf))
+        .map(|mut buf| buf.drain(..).collect())
         .unwrap_or_default()
 }
 
 pub fn drain_verbose_log() -> Vec<String> {
     verbose_buf()
         .lock()
-        .map(|mut buf| std::mem::take(&mut *buf))
+        .map(|mut buf| buf.drain(..).collect())
         .unwrap_or_default()
 }
 
@@ -209,7 +201,7 @@ mod tests {
     #[test]
     fn io_wraps_std_io_error() {
         let io = std::io::Error::new(std::io::ErrorKind::NotFound, "no such file");
-        let e = PortError::Io(io);
+        let e = PortError::Io(std::sync::Arc::new(io));
         assert_eq!(e.short(), "io error");
         assert!(e.full().contains("no such file"));
     }

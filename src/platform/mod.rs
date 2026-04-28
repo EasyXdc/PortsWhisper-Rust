@@ -5,8 +5,8 @@ use crate::util::command_exists;
 use crate::util::run_output;
 #[cfg(unix)]
 use crate::util::{basename, run_output_with_c_locale};
-use std::collections::HashMap;
-use std::path::PathBuf;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 #[cfg(any(unix, target_os = "windows"))]
 use std::process::Command;
 use std::time::Duration;
@@ -48,6 +48,74 @@ pub trait PlatformScanner: Sync {
     fn get_process_log_files(&self, pid: u32) -> Vec<LogFile>;
     /// Return a shell command string for reading system logs for the given PID.
     fn get_system_log_command(&self, pid: u32, follow: bool) -> Option<String>;
+    /// Return a shell command string for reading system logs with an optional since filter.
+    fn get_system_log_command_with_since(
+        &self,
+        pid: u32,
+        follow: bool,
+        since: Option<&str>,
+    ) -> Option<String> {
+        let _ = since;
+        self.get_system_log_command(pid, follow)
+    }
+    /// Return whether system log fallback supports streaming follow mode.
+    fn supports_system_log_follow(&self) -> bool {
+        true
+    }
+    /// Resolve the working directory for a single PID.
+    fn get_cwd_for_pid(&self, pid: u32) -> Option<PathBuf> {
+        self.batch_cwd(&[pid]).get(&pid).cloned()
+    }
+    /// Build a platform-specific tail command for a log file.
+    fn build_tail_command(
+        &self,
+        path: &Path,
+        lines: &str,
+        follow: bool,
+    ) -> crate::model::TailCommand {
+        let mut argv = vec!["tail".to_string()];
+        if follow {
+            argv.push("-f".to_string());
+        }
+        argv.push("-n".to_string());
+        argv.push(lines.to_string());
+        argv.push(path.to_string_lossy().to_string());
+        crate::model::TailCommand::Argv(argv)
+    }
+    /// Apply a grep filter to a shell command string.
+    fn apply_grep_to_shell_command(&self, cmd: &str, grep: &str) -> String {
+        let safe_grep = grep.replace('\'', "'\\''");
+        format!("{cmd} | grep --line-buffered -F -- '{safe_grep}'")
+    }
+    /// Execute a shell command interactively (inherit stdin/stdout/stderr).
+    fn run_shell(&self, cmd: &str) -> i32 {
+        use std::process::{Command, Stdio};
+        let status = Command::new("sh")
+            .args(["-c", cmd])
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .status();
+        if status.map(|s| s.success()).unwrap_or(false) {
+            0
+        } else {
+            1
+        }
+    }
+    /// Execute a shell command and capture its output.
+    fn run_shell_output(&self, cmd: &str) -> Result<String, String> {
+        use std::process::{Command, Stdio};
+        let output = Command::new("sh")
+            .args(["-c", cmd])
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|err| err.to_string())?;
+        if output.status.success() {
+            Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+        } else {
+            Err(String::from_utf8_lossy(&output.stderr).into_owned())
+        }
+    }
 }
 
 pub fn listening_ports_raw() -> Vec<RawPortEntry> {
@@ -152,7 +220,7 @@ fn darwin_listening_ports_from_result(result: Result<String, PortError>) -> Vec<
 #[cfg(any(target_os = "macos", all(test, unix)))]
 fn darwin_listening_ports_from_output(raw: String) -> Vec<RawPortEntry> {
     let mut entries = Vec::new();
-    let mut seen = HashMap::new();
+    let mut seen = HashSet::new();
     for line in raw.lines().skip(1) {
         let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.len() < 9 {
@@ -161,13 +229,13 @@ fn darwin_listening_ports_from_output(raw: String) -> Vec<RawPortEntry> {
         let Some(port) = parse_port_suffix(parts[8]) else {
             continue;
         };
-        if seen.contains_key(&port) {
+        if seen.contains(&port) {
             continue;
         }
         let Ok(pid) = parts[1].parse::<u32>() else {
             continue;
         };
-        seen.insert(port, true);
+        seen.insert(port);
         entries.push(RawPortEntry {
             port,
             pid,
@@ -195,7 +263,7 @@ fn linux_listening_ports_raw() -> Vec<RawPortEntry> {
         return proc_entries;
     }
     let mut entries = Vec::new();
-    let mut seen = HashMap::new();
+    let mut seen = HashSet::new();
     if command_exists("ss") {
         let raw = degrade_command_output(run_output(
             "ss",
@@ -211,7 +279,7 @@ fn linux_listening_ports_raw() -> Vec<RawPortEntry> {
                 let Some(port) = parse_port_suffix(parts[3]) else {
                     continue;
                 };
-                if seen.contains_key(&port) {
+                if seen.contains(&port) {
                     continue;
                 }
                 let users = parts.get(5..).unwrap_or(&[]).join(" ");
@@ -220,7 +288,7 @@ fn linux_listening_ports_raw() -> Vec<RawPortEntry> {
                 };
                 let process_name =
                     parse_quoted_process_name(&users).unwrap_or_else(|| linux_proc_name(pid));
-                seen.insert(port, true);
+                seen.insert(port);
                 entries.push(RawPortEntry {
                     port,
                     pid,
@@ -248,7 +316,7 @@ fn linux_listening_ports_raw() -> Vec<RawPortEntry> {
                 let Some(port) = parse_port_suffix(parts[3]) else {
                     continue;
                 };
-                if seen.contains_key(&port) {
+                if seen.contains(&port) {
                     continue;
                 }
                 let pid_program = parts[parts.len() - 1];
@@ -259,7 +327,7 @@ fn linux_listening_ports_raw() -> Vec<RawPortEntry> {
                 let Ok(pid) = pair[0].parse::<u32>() else {
                     continue;
                 };
-                seen.insert(port, true);
+                seen.insert(port);
                 entries.push(RawPortEntry {
                     port,
                     pid,
@@ -289,7 +357,7 @@ pub(crate) fn linux_listening_port_raw(port: u16) -> Option<RawPortEntry> {
 
 #[cfg(target_os = "linux")]
 fn parse_ss_single_port(raw: &str, port: u16) -> Option<RawPortEntry> {
-    let mut seen = HashMap::new();
+    let mut seen = HashSet::new();
     for line in raw.lines().skip(1) {
         let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.len() < 5 {
@@ -301,7 +369,7 @@ fn parse_ss_single_port(raw: &str, port: u16) -> Option<RawPortEntry> {
         if p != port {
             continue;
         }
-        if seen.contains_key(&p) {
+        if seen.contains(&p) {
             continue;
         }
         let users = parts.get(5..).unwrap_or(&[]).join(" ");
@@ -310,7 +378,7 @@ fn parse_ss_single_port(raw: &str, port: u16) -> Option<RawPortEntry> {
         };
         let process_name =
             parse_quoted_process_name(&users).unwrap_or_else(|| linux_proc_name(pid));
-        seen.insert(p, true);
+        seen.insert(p);
         return Some(RawPortEntry {
             port: p,
             pid,
@@ -351,7 +419,7 @@ where
         return Vec::new();
     }
 
-    let mut seen = HashMap::new();
+    let mut seen = HashSet::new();
     let mut entries = Vec::new();
     for pid in pids {
         let Some(inodes) = inode_lookup(*pid) else {
@@ -361,10 +429,10 @@ where
             let Some(port) = inode_ports.get(&inode) else {
                 continue;
             };
-            if seen.contains_key(port) {
+            if seen.contains(port) {
                 continue;
             }
-            seen.insert(*port, true);
+            seen.insert(*port);
             entries.push(RawPortEntry {
                 port: *port,
                 pid: *pid,
@@ -450,7 +518,7 @@ fn windows_listening_ports_raw() -> Vec<RawPortEntry> {
 #[cfg(any(target_os = "windows", test))]
 fn windows_powershell_listening_ports_from_output(raw: String) -> Vec<RawPortEntry> {
     let mut entries = Vec::new();
-    let mut seen = HashMap::new();
+    let mut seen = HashSet::new();
     for line in raw.lines() {
         let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.len() < 2 {
@@ -459,7 +527,7 @@ fn windows_powershell_listening_ports_from_output(raw: String) -> Vec<RawPortEnt
         let Ok(port) = parts[0].parse::<u16>() else {
             continue;
         };
-        if seen.contains_key(&port) {
+        if seen.contains(&port) {
             continue;
         }
         let Ok(pid) = parts[1].parse::<u32>() else {
@@ -468,7 +536,7 @@ fn windows_powershell_listening_ports_from_output(raw: String) -> Vec<RawPortEnt
         if pid == 0 {
             continue;
         }
-        seen.insert(port, true);
+        seen.insert(port);
         entries.push(RawPortEntry {
             port,
             pid,
@@ -485,7 +553,7 @@ fn windows_powershell_listening_ports_from_output(raw: String) -> Vec<RawPortEnt
 #[cfg(target_os = "windows")]
 fn windows_netstat_listening_ports_from_output(raw: String) -> Vec<RawPortEntry> {
     let mut entries = Vec::new();
-    let mut seen = HashMap::new();
+    let mut seen = HashSet::new();
     for line in raw.lines().filter(|l| l.contains("LISTENING")) {
         let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.len() < 5 {
@@ -494,7 +562,7 @@ fn windows_netstat_listening_ports_from_output(raw: String) -> Vec<RawPortEntry>
         let Some(port) = parse_port_suffix(parts[1]) else {
             continue;
         };
-        if seen.contains_key(&port) {
+        if seen.contains(&port) {
             continue;
         }
         let Ok(pid) = parts[parts.len() - 1].parse::<u32>() else {
@@ -503,7 +571,7 @@ fn windows_netstat_listening_ports_from_output(raw: String) -> Vec<RawPortEntry>
         if pid == 0 {
             continue;
         }
-        seen.insert(port, true);
+        seen.insert(port);
         entries.push(RawPortEntry {
             port,
             pid,
@@ -705,7 +773,7 @@ fn unix_all_processes_raw() -> Vec<RawProcessEntry> {
     ));
     let current_pid = std::process::id();
     let mut entries = Vec::new();
-    let mut seen = HashMap::new();
+    let mut seen = HashSet::new();
     for line in raw.lines() {
         let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.len() < 10 {
@@ -714,7 +782,7 @@ fn unix_all_processes_raw() -> Vec<RawProcessEntry> {
         let Ok(pid) = parts[0].parse::<u32>() else {
             continue;
         };
-        if pid <= 1 || pid == current_pid || seen.contains_key(&pid) {
+        if pid <= 1 || pid == current_pid || seen.contains(&pid) {
             continue;
         }
         let cpu = parts[1].parse::<f32>().unwrap_or(0.0);
@@ -723,7 +791,7 @@ fn unix_all_processes_raw() -> Vec<RawProcessEntry> {
         let lstart = Some(parts[4..9].join(" "));
         let command = parts[9..].join(" ");
         let process_name = basename(command.split_whitespace().next().unwrap_or("unknown"));
-        seen.insert(pid, true);
+        seen.insert(pid);
         entries.push(RawProcessEntry {
             pid,
             process_name,

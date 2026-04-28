@@ -13,18 +13,14 @@ struct KillJsonResult {
 }
 
 pub fn kill_process(pid: u32, signal: &str) -> bool {
-    let (program, args) = build_kill_command(pid, signal, cfg!(target_os = "windows"));
-    Command::new(program)
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    crate::platform::native_scanner().kill_process(pid, signal)
 }
 
-fn build_kill_command(pid: u32, signal: &str, windows_mode: bool) -> (String, Vec<String>) {
+pub(crate) fn build_kill_command(
+    pid: u32,
+    signal: &str,
+    windows_mode: bool,
+) -> (String, Vec<String>) {
     if windows_mode {
         if signal == "SIGKILL" {
             return (
@@ -46,6 +42,18 @@ fn build_kill_command(pid: u32, signal: &str, windows_mode: bool) -> (String, Ve
         "-TERM"
     };
     ("kill".to_string(), vec![sig.to_string(), pid.to_string()])
+}
+
+pub(crate) fn execute_kill_command(pid: u32, signal: &str, windows_mode: bool) -> bool {
+    let (program, args) = build_kill_command(pid, signal, windows_mode);
+    Command::new(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
 }
 
 fn parse_requested_signal(args: &[String]) -> Option<String> {
@@ -290,7 +298,7 @@ where
             continue;
         }
         let Some(resolved) = resolve(n) else {
-            let msg = if n <= 65_535 {
+            let msg = if crate::model::is_likely_port(n) {
                 format!("No listener on :{n} and no process with PID {n}")
             } else {
                 format!("No process with PID {n}")
@@ -498,11 +506,14 @@ fn validate_range_target(target: &str, start: u32, end: u32) -> Result<(), Strin
             "Invalid range: {target} (start must be less than end)"
         ));
     }
+    if start < 1 || end > crate::model::MAX_PORT {
+        return Err(format!(
+            "Invalid range: {target} (ports must be 1-{})",
+            crate::model::MAX_PORT
+        ));
+    }
     if end - start > 1000 {
         return Err(format!("Range too large: {target} (max 1000 ports)"));
-    }
-    if start < 1 || end > 65_535 {
-        return Err(format!("Invalid range: {target} (ports must be 1-65535)"));
     }
     Ok(())
 }
@@ -915,7 +926,8 @@ mod tests {
         let _guard = crate::style::glyph_test_lock().lock().unwrap();
         crate::style::set_force_ascii(true);
 
-        let success = strip_ansi(&render_kill_target_line(
+        let success = strip_ansi(
+            &render_kill_target_line(
                 &KillJsonResult {
                     signal: "SIGTERM".to_string(),
                     targets: vec![json_output::KillTargetPayload {
@@ -935,7 +947,8 @@ mod tests {
             .expect("success line should render"),
         );
 
-        let failure = strip_ansi(&render_kill_target_line(
+        let failure = strip_ansi(
+            &render_kill_target_line(
                 &KillJsonResult {
                     signal: "SIGTERM".to_string(),
                     targets: vec![json_output::KillTargetPayload {

@@ -368,9 +368,8 @@ fn path_to_string(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        CommandEnvelope, KillTargetPayload, LogSourcePayload, clean_payload,
-        detail_payload, kill_payload, list_payload, logs_payload, process_list_payload,
-        render_json,
+        CommandEnvelope, KillTargetPayload, LogSourcePayload, clean_payload, detail_payload,
+        kill_payload, list_payload, logs_payload, process_list_payload, render_json,
     };
     use crate::check::{self as check_mod};
     use crate::model::{DisplayTime, PortInfo, ProcessInfo, ProcessStatus, ProcessTreeNode};

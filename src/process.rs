@@ -47,16 +47,15 @@ fn get_processes_with(scanner: &dyn PlatformScanner, dev_only: bool) -> Vec<Proc
         .map(|e| e.pid)
         .collect();
     let cwd_map = scanner.batch_cwd(&non_docker_pids);
-    let processes = enrich_process_entries_with_detectors(
+    enrich_process_entries_with_detectors(
         filtered_entries,
         &cwd_map,
         find_project_root,
         detect_framework,
-    );
-    let _by_pid = build_process_index(&processes);
-    processes
+    )
 }
 
+#[cfg(test)]
 fn build_process_index(processes: &[ProcessInfo]) -> std::collections::HashMap<u32, ProcessInfo> {
     processes
         .iter()
@@ -151,7 +150,7 @@ where
     if n == 0 {
         return None;
     }
-    if n <= 65_535
+    if crate::model::is_likely_port(n)
         && let Some(info) = port_lookup(n as u16)
     {
         return Some(KillTargetResolution {
@@ -190,13 +189,12 @@ mod tests {
         RawProcessDetails, RawProcessEntry,
     };
     use crate::platform::PlatformScanner;
-    use crate::test_support::{fake_port, fake_port_with_status, FakePlatformScanner};
+    use crate::test_support::{FakePlatformScanner, fake_port, fake_port_with_status};
     use crate::util::find_project_root;
     use std::fs;
     use std::path::PathBuf;
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn kill_target_resolution_matches_node_reference_port_then_pid_behavior() {
@@ -230,7 +228,7 @@ mod tests {
 
     #[test]
     fn fake_platform_enriches_process_snapshot_and_dev_filtering() {
-        let project = temp_project("process-fake");
+        let project = temp_project_dir("process-fake");
         fs::write(
             project.join("package.json"),
             r#"{"dependencies":{"vite":"latest"}}"#,
@@ -286,7 +284,7 @@ mod tests {
 
     #[test]
     fn repeated_process_cwds_reuse_project_root_and_framework_detection() {
-        let project = temp_project("process-root-cache");
+        let project = temp_project_dir("process-root-cache");
         fs::write(
             project.join("package.json"),
             r#"{"dependencies":{"vite":"latest"}}"#,
@@ -340,7 +338,7 @@ mod tests {
 
     #[test]
     fn non_dev_processes_skip_project_root_and_framework_detection() {
-        let project = temp_project("process-skip-framework");
+        let project = temp_project_dir("process-skip-framework");
         fs::write(
             project.join("package.json"),
             r#"{"dependencies":{"vite":"latest"}}"#,
@@ -500,18 +498,7 @@ mod tests {
         }
     }
 
-    fn temp_project(label: &str) -> std::path::PathBuf {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "port-whisperer-{label}-{}-{nanos}",
-            std::process::id()
-        ));
-        fs::create_dir_all(&root).unwrap();
-        root
-    }
+    use crate::test_support::temp_project_dir;
 
     fn project_name(path: &std::path::Path) -> String {
         path.file_name().unwrap().to_string_lossy().to_string()

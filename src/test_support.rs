@@ -1,5 +1,5 @@
 use crate::model::{
-    DockerInfo, LogFile, ProcessTreeNode, ProcessStatus, RawPortEntry, RawProcessDetails,
+    DockerInfo, LogFile, ProcessStatus, ProcessTreeNode, RawPortEntry, RawProcessDetails,
     RawProcessEntry,
 };
 use crate::platform::PlatformScanner;
@@ -542,6 +542,21 @@ pub fn strip_ansi(s: &str) -> String {
         out.push(ch);
     }
     out
+}
+
+#[cfg(test)]
+pub fn temp_project_dir(label: &str) -> std::path::PathBuf {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "port-whisperer-{label}-{}-{nanos}",
+        std::process::id()
+    ));
+    let _ = std::fs::create_dir_all(&root);
+    root
 }
 
 #[cfg(test)]

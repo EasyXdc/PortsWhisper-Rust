@@ -380,7 +380,10 @@ fn parse_check_ports(args: &[String]) -> Vec<u16> {
 fn parse_open_port(args: &[String]) -> u16 {
     args.first()
         .and_then(|v| v.parse::<u16>().ok())
-        .unwrap_or(0)
+        .unwrap_or_else(|| {
+            eprintln!("Warning: invalid port number, defaulting to 80");
+            80
+        })
 }
 
 fn is_query_filter_flag(arg: &str) -> bool {
@@ -949,7 +952,10 @@ mod tests {
 
     #[test]
     fn clean_prompt_flow_only_kills_on_yes_answer() {
-        let orphaned = vec![fake_port_with_status(3000, 42, ProcessStatus::Orphaned), fake_port_with_status(3001, 43, ProcessStatus::Orphaned)];
+        let orphaned = vec![
+            fake_port_with_status(3000, 42, ProcessStatus::Orphaned),
+            fake_port_with_status(3001, 43, ProcessStatus::Orphaned),
+        ];
         let attempts = RefCell::new(Vec::new());
         let outcome = apply_clean_answer(&orphaned, Some("n"), |pid, signal| {
             attempts.borrow_mut().push((pid, signal.to_string()));
@@ -1109,8 +1115,11 @@ mod tests {
             ms: 10_000,
         });
 
-        let rendered = render_list_json(&[fake_port_with_status(3000, 42, ProcessStatus::Orphaned)], &QueryFilters::default())
-            .expect("json render should succeed");
+        let rendered = render_list_json(
+            &[fake_port_with_status(3000, 42, ProcessStatus::Orphaned)],
+            &QueryFilters::default(),
+        )
+        .expect("json render should succeed");
 
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&rendered).expect("json should parse"),
@@ -1211,7 +1220,12 @@ mod tests {
         drain_user_warnings();
 
         let rendered = run_clean_json_with(
-            || vec![fake_port_with_status(3000, 42, ProcessStatus::Orphaned), fake_port_with_status(3001, 43, ProcessStatus::Orphaned)],
+            || {
+                vec![
+                    fake_port_with_status(3000, 42, ProcessStatus::Orphaned),
+                    fake_port_with_status(3001, 43, ProcessStatus::Orphaned),
+                ]
+            },
             |pid, _signal| pid == 42,
         )
         .expect("json render should succeed");
@@ -1266,8 +1280,11 @@ mod tests {
             ms: 10_000,
         });
 
-        let rendered = run_clean_json_with(|| vec![fake_port_with_status(3000, 42, ProcessStatus::Orphaned)], |_pid, _signal| true)
-            .expect("json render should succeed");
+        let rendered = run_clean_json_with(
+            || vec![fake_port_with_status(3000, 42, ProcessStatus::Orphaned)],
+            |_pid, _signal| true,
+        )
+        .expect("json render should succeed");
 
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&rendered.output).expect("json should parse"),
@@ -1306,7 +1323,12 @@ mod tests {
         drain_user_warnings();
 
         let exit = run_clean_json_with(
-            || vec![fake_port_with_status(3000, 42, ProcessStatus::Orphaned), fake_port_with_status(3001, 43, ProcessStatus::Orphaned)],
+            || {
+                vec![
+                    fake_port_with_status(3000, 42, ProcessStatus::Orphaned),
+                    fake_port_with_status(3001, 43, ProcessStatus::Orphaned),
+                ]
+            },
             |pid, _signal| pid == 42,
         )
         .expect("json render should succeed")

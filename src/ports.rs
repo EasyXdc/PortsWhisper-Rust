@@ -5,7 +5,7 @@ use crate::platform::{self, PlatformScanner};
 use crate::util::{
     find_project_root, format_memory, format_uptime_from_lstart, path_basename, run_output,
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::Path;
 use std::thread;
 
@@ -104,12 +104,9 @@ where
     FindRoot: Fn(&Path) -> std::path::PathBuf,
     DetectFramework: Fn(&Path) -> Option<String>,
 {
-    let pids: Vec<u32> = entries
-        .iter()
-        .map(|e| e.pid)
-        .collect::<HashSet<_>>()
-        .into_iter()
-        .collect();
+    let mut pids: Vec<u32> = entries.iter().map(|e| e.pid).collect();
+    pids.sort_unstable();
+    pids.dedup();
     let single_process_map = if detailed && entries.len() == 1 {
         entries
             .first()
@@ -125,7 +122,7 @@ where
     };
     let has_docker = entries
         .iter()
-        .any(|e| e.process_name.starts_with("com.docke") || e.process_name == "docker");
+        .any(|e| crate::framework::is_docker_process(&e.process_name));
     let (ps_map, cwd_map, docker_map) = thread::scope(|scope| {
         let ps_task = scope.spawn(|| {
             if single_process_map.is_empty() {
@@ -264,11 +261,10 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{Arc, Barrier, Mutex};
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn fake_platform_enriches_ports_default_filter_all_and_details() {
-        let project = temp_project("ports-fake");
+        let project = temp_project_dir("ports-fake");
         fs::write(
             project.join("package.json"),
             r#"{"dependencies":{"vite":"latest"}}"#,
@@ -384,7 +380,7 @@ mod tests {
 
     #[test]
     fn port_field_semantics_match_node_reference_enrichment() {
-        let project = temp_project("ports-semantics");
+        let project = temp_project_dir("ports-semantics");
         fs::write(
             project.join("package.json"),
             r#"{"dependencies":{"vite":"latest"}}"#,
@@ -729,7 +725,7 @@ mod tests {
 
     #[test]
     fn repeated_cwd_reuses_project_root_and_framework_detection() {
-        let shared_root = temp_project("shared-root-cache");
+        let shared_root = temp_project_dir("shared-root-cache");
         fs::write(
             shared_root.join("package.json"),
             r#"{"dependencies":{"vite":"latest"}}"#,
@@ -1118,18 +1114,7 @@ mod tests {
         }
     }
 
-    fn temp_project(label: &str) -> std::path::PathBuf {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "port-whisperer-{label}-{}-{nanos}",
-            std::process::id()
-        ));
-        fs::create_dir_all(&root).unwrap();
-        root
-    }
+    use crate::test_support::temp_project_dir;
 
     fn project_name(path: &std::path::Path) -> String {
         path.file_name().unwrap().to_string_lossy().to_string()
