@@ -62,21 +62,35 @@ If you want to test a future prerelease build later, use the `next` dist-tag exp
 
 ### Homebrew
 
-After the Homebrew tap is published:
+On macOS, install from the project Homebrew tap:
 
 ```bash
 brew tap EasyXdc/tap
 brew install ports-rs
 ```
 
-The release workflow generates the formula asset used by the tap. Maintainer notes live in [`docs/homebrew.md`](./docs/homebrew.md).
+This installs both commands:
+
+```bash
+ports
+whoisonport
+```
+
+To upgrade later:
+
+```bash
+brew update
+brew upgrade ports-rs
+```
+
+Tap maintenance notes live in [`docs/homebrew.md`](./docs/homebrew.md).
 
 ### Cargo
 
 If you already use Rust and want to install from source:
 
 ```bash
-git clone https://github.com/LarsenCundric/port-whisperer-rust.git
+git clone https://github.com/EasyXdc/PortsWhisper-Rust.git
 cd port-whisperer-rust
 cargo install --path .
 ```

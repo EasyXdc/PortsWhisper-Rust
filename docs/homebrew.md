@@ -1,6 +1,19 @@
 # Homebrew Support
 
-This project publishes macOS release archives that can be consumed by a Homebrew tap:
+The public tap repository is expected to live at:
+
+```sh
+https://github.com/EasyXdc/homebrew-tap
+```
+
+Users install it as:
+
+```sh
+brew tap EasyXdc/tap
+brew install ports-rs
+```
+
+This project publishes macOS release archives consumed by that tap:
 
 - `ports-rs-darwin-arm64.tar.gz`
 - `ports-rs-darwin-x64.tar.gz`
@@ -11,8 +24,6 @@ Release automation generates two helper assets:
 - `SHA256SUMS` — checksums for all release archives
 
 ## User Install Command
-
-After the `EasyXdc/homebrew-tap` repository is published with the generated formula:
 
 ```sh
 brew tap EasyXdc/tap
@@ -42,6 +53,8 @@ brew update
 brew reinstall ports-rs
 brew test ports-rs
 ```
+
+The formula intentionally targets macOS only. Linux users should use npm, Cargo, or the prebuilt GitHub Release archive.
 
 ## Formula Generation
 

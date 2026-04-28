@@ -62,21 +62,35 @@ whoisonport
 
 ### Homebrew
 
-Homebrew tap 发布后可以这样安装：
+macOS 用户可以通过项目的 Homebrew tap 安装：
 
 ```bash
 brew tap EasyXdc/tap
 brew install ports-rs
 ```
 
-release workflow 会自动生成 tap 使用的 formula 资产。维护说明见 [`docs/homebrew.md`](./docs/homebrew.md)。
+这会安装两个命令：
+
+```bash
+ports
+whoisonport
+```
+
+后续升级：
+
+```bash
+brew update
+brew upgrade ports-rs
+```
+
+tap 维护说明见 [`docs/homebrew.md`](./docs/homebrew.md)。
 
 ### Cargo
 
 如果你已经安装了 Rust，并且希望从源码安装：
 
 ```bash
-git clone https://github.com/LarsenCundric/port-whisperer-rust.git
+git clone https://github.com/EasyXdc/PortsWhisper-Rust.git
 cd port-whisperer-rust
 cargo install --path .
 ```
