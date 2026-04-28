@@ -5,9 +5,9 @@ use crate::util::command_exists;
 use crate::util::run_output;
 #[cfg(unix)]
 use crate::util::{basename, run_output_with_c_locale};
-use std::collections::HashMap;
-use std::path::PathBuf;
-#[cfg(any(unix, target_os = "windows"))]
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+#[cfg(unix)]
 use std::process::Command;
 use std::time::Duration;
 
@@ -18,28 +18,112 @@ pub mod macos;
 #[cfg(target_os = "windows")]
 pub mod windows;
 
+/// Platform-specific interface for discovering ports, processes, and their metadata.
 pub trait PlatformScanner: Sync {
+    /// Return all TCP LISTEN entries on the system.
     fn get_listening_ports_raw(&self) -> Vec<RawPortEntry>;
+    /// Return the TCP LISTEN entry for a specific port, if any.
     fn get_listening_port_raw(&self, port: u16) -> Option<RawPortEntry> {
         self.get_listening_ports_raw()
             .into_iter()
             .find(|entry| entry.port == port)
     }
+    /// Fetch process details (ppid, stat, rss, lstart, command) for the given PIDs.
     fn batch_process_info(&self, pids: &[u32]) -> HashMap<u32, RawProcessDetails>;
+    /// Fetch process details for a single PID.
     fn get_process_details(&self, pid: u32) -> Option<RawProcessDetails> {
         self.batch_process_info(&[pid]).remove(&pid)
     }
+    /// Resolve the current working directory for the given PIDs.
     fn batch_cwd(&self, pids: &[u32]) -> HashMap<u32, PathBuf>;
+    /// Return all running processes with CPU, memory, and command info.
     fn get_all_processes_raw(&self) -> Vec<RawProcessEntry>;
+    /// Walk the parent chain from the given PID up to PID 1.
     fn get_process_tree(&self, pid: u32) -> Vec<ProcessTreeNode>;
+    /// Check whether a process with the given PID exists.
     fn pid_exists(&self, pid: u32) -> bool;
+    /// Send a signal to the process with the given PID. Returns true on success.
     fn kill_process(&self, pid: u32, signal: &str) -> bool;
+    /// Discover log files associated with the given PID.
     fn get_process_log_files(&self, pid: u32) -> Vec<LogFile>;
+    /// Return a shell command string for reading system logs for the given PID.
     fn get_system_log_command(&self, pid: u32, follow: bool) -> Option<String>;
+    /// Return a shell command string for reading system logs with an optional since filter.
+    fn get_system_log_command_with_since(
+        &self,
+        pid: u32,
+        follow: bool,
+        since: Option<&str>,
+    ) -> Option<String> {
+        let _ = since;
+        self.get_system_log_command(pid, follow)
+    }
+    /// Return whether system log fallback supports streaming follow mode.
+    fn supports_system_log_follow(&self) -> bool {
+        true
+    }
+    /// Resolve the working directory for a single PID.
+    fn get_cwd_for_pid(&self, pid: u32) -> Option<PathBuf> {
+        self.batch_cwd(&[pid]).get(&pid).cloned()
+    }
+    /// Build a platform-specific tail command for a log file.
+    fn build_tail_command(
+        &self,
+        path: &Path,
+        lines: &str,
+        follow: bool,
+    ) -> crate::model::TailCommand {
+        let mut argv = vec!["tail".to_string()];
+        if follow {
+            argv.push("-f".to_string());
+        }
+        argv.push("-n".to_string());
+        argv.push(lines.to_string());
+        argv.push(path.to_string_lossy().to_string());
+        crate::model::TailCommand::Argv(argv)
+    }
+    /// Apply a grep filter to a shell command string.
+    fn apply_grep_to_shell_command(&self, cmd: &str, grep: &str) -> String {
+        let safe_grep = grep.replace('\'', "'\\''");
+        format!("{cmd} | grep --line-buffered -F -- '{safe_grep}'")
+    }
+    /// Execute a shell command interactively (inherit stdin/stdout/stderr).
+    fn run_shell(&self, cmd: &str) -> i32 {
+        use std::process::{Command, Stdio};
+        let status = Command::new("sh")
+            .args(["-c", cmd])
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .status();
+        if status.map(|s| s.success()).unwrap_or(false) {
+            0
+        } else {
+            1
+        }
+    }
+    /// Execute a shell command and capture its output.
+    fn run_shell_output(&self, cmd: &str) -> Result<String, String> {
+        use std::process::{Command, Stdio};
+        let output = Command::new("sh")
+            .args(["-c", cmd])
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|err| err.to_string())?;
+        if output.status.success() {
+            Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+        } else {
+            Err(String::from_utf8_lossy(&output.stderr).into_owned())
+        }
+    }
 }
 
 pub fn listening_ports_raw() -> Vec<RawPortEntry> {
     native_scanner().get_listening_ports_raw()
+}
+
+pub fn listening_port_raw(port: u16) -> Option<RawPortEntry> {
+    native_scanner().get_listening_port_raw(port)
 }
 
 pub fn batch_process_info(pids: &[u32]) -> HashMap<u32, RawProcessDetails> {
@@ -140,7 +224,7 @@ fn darwin_listening_ports_from_result(result: Result<String, PortError>) -> Vec<
 #[cfg(any(target_os = "macos", all(test, unix)))]
 fn darwin_listening_ports_from_output(raw: String) -> Vec<RawPortEntry> {
     let mut entries = Vec::new();
-    let mut seen = HashMap::new();
+    let mut seen = HashSet::new();
     for line in raw.lines().skip(1) {
         let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.len() < 9 {
@@ -149,13 +233,13 @@ fn darwin_listening_ports_from_output(raw: String) -> Vec<RawPortEntry> {
         let Some(port) = parse_port_suffix(parts[8]) else {
             continue;
         };
-        if seen.contains_key(&port) {
+        if seen.contains(&port) {
             continue;
         }
         let Ok(pid) = parts[1].parse::<u32>() else {
             continue;
         };
-        seen.insert(port, true);
+        seen.insert(port);
         entries.push(RawPortEntry {
             port,
             pid,
@@ -183,7 +267,7 @@ fn linux_listening_ports_raw() -> Vec<RawPortEntry> {
         return proc_entries;
     }
     let mut entries = Vec::new();
-    let mut seen = HashMap::new();
+    let mut seen = HashSet::new();
     if command_exists("ss") {
         let raw = degrade_command_output(run_output(
             "ss",
@@ -199,7 +283,7 @@ fn linux_listening_ports_raw() -> Vec<RawPortEntry> {
                 let Some(port) = parse_port_suffix(parts[3]) else {
                     continue;
                 };
-                if seen.contains_key(&port) {
+                if seen.contains(&port) {
                     continue;
                 }
                 let users = parts.get(5..).unwrap_or(&[]).join(" ");
@@ -208,7 +292,7 @@ fn linux_listening_ports_raw() -> Vec<RawPortEntry> {
                 };
                 let process_name =
                     parse_quoted_process_name(&users).unwrap_or_else(|| linux_proc_name(pid));
-                seen.insert(port, true);
+                seen.insert(port);
                 entries.push(RawPortEntry {
                     port,
                     pid,
@@ -236,7 +320,7 @@ fn linux_listening_ports_raw() -> Vec<RawPortEntry> {
                 let Some(port) = parse_port_suffix(parts[3]) else {
                     continue;
                 };
-                if seen.contains_key(&port) {
+                if seen.contains(&port) {
                     continue;
                 }
                 let pid_program = parts[parts.len() - 1];
@@ -247,7 +331,7 @@ fn linux_listening_ports_raw() -> Vec<RawPortEntry> {
                 let Ok(pid) = pair[0].parse::<u32>() else {
                     continue;
                 };
-                seen.insert(port, true);
+                seen.insert(port);
                 entries.push(RawPortEntry {
                     port,
                     pid,
@@ -257,6 +341,55 @@ fn linux_listening_ports_raw() -> Vec<RawPortEntry> {
         }
     }
     entries
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn linux_listening_port_raw(port: u16) -> Option<RawPortEntry> {
+    if command_exists("ss") {
+        let raw = degrade_command_output(run_output(
+            "ss",
+            ["-tlnp", &format!("sport = :{port}")],
+            Some(Duration::from_millis(10_000)),
+        ));
+        if let Some(entry) = parse_ss_single_port(&raw, port) {
+            return Some(entry);
+        }
+    }
+    let entries = linux_listening_ports_from_procfs();
+    entries.into_iter().find(|e| e.port == port)
+}
+
+#[cfg(target_os = "linux")]
+fn parse_ss_single_port(raw: &str, port: u16) -> Option<RawPortEntry> {
+    let mut seen = HashSet::new();
+    for line in raw.lines().skip(1) {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() < 5 {
+            continue;
+        }
+        let Some(p) = parse_port_suffix(parts[3]) else {
+            continue;
+        };
+        if p != port {
+            continue;
+        }
+        if seen.contains(&p) {
+            continue;
+        }
+        let users = parts.get(5..).unwrap_or(&[]).join(" ");
+        let Some(pid) = parse_after(&users, "pid=", |c| !c.is_ascii_digit()) else {
+            continue;
+        };
+        let process_name =
+            parse_quoted_process_name(&users).unwrap_or_else(|| linux_proc_name(pid));
+        seen.insert(p);
+        return Some(RawPortEntry {
+            port: p,
+            pid,
+            process_name,
+        });
+    }
+    None
 }
 
 #[cfg(target_os = "linux")]
@@ -290,7 +423,7 @@ where
         return Vec::new();
     }
 
-    let mut seen = HashMap::new();
+    let mut seen = HashSet::new();
     let mut entries = Vec::new();
     for pid in pids {
         let Some(inodes) = inode_lookup(*pid) else {
@@ -300,10 +433,10 @@ where
             let Some(port) = inode_ports.get(&inode) else {
                 continue;
             };
-            if seen.contains_key(port) {
+            if seen.contains(port) {
                 continue;
             }
-            seen.insert(*port, true);
+            seen.insert(*port);
             entries.push(RawPortEntry {
                 port: *port,
                 pid: *pid,
@@ -369,7 +502,7 @@ fn windows_listening_ports_raw() -> Vec<RawPortEntry> {
         [
             "-NoProfile",
             "-Command",
-            "Get-NetTCPConnection -State Listen | Sort-Object LocalPort | ForEach-Object { $name = (Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue).ProcessName; if ($name) { \"{0} {1} {2}\" -f $_.LocalPort, $_.OwningProcess, $name } else { \"{0} {1}\" -f $_.LocalPort, $_.OwningProcess } }",
+            "$names=@{}; Get-Process | ForEach-Object { $names[[int]$_.Id]=$_.ProcessName }; Get-NetTCPConnection -State Listen | Sort-Object LocalPort | ForEach-Object { $name = $names[[int]$_.OwningProcess]; if ($name) { \"{0} {1} {2}\" -f $_.LocalPort, $_.OwningProcess, $name } else { \"{0} {1}\" -f $_.LocalPort, $_.OwningProcess } }",
         ],
         Some(Duration::from_millis(10_000)),
     ));
@@ -386,10 +519,30 @@ fn windows_listening_ports_raw() -> Vec<RawPortEntry> {
     windows_netstat_listening_ports_from_output(raw)
 }
 
+#[cfg(target_os = "windows")]
+pub(crate) fn windows_listening_port_raw(port: u16) -> Option<RawPortEntry> {
+    let command = windows_single_port_command(port);
+    let raw = degrade_command_output(run_output(
+        "powershell",
+        ["-NoProfile", "-Command", &command],
+        Some(Duration::from_millis(5_000)),
+    ));
+    windows_powershell_listening_ports_from_output(raw)
+        .into_iter()
+        .find(|entry| entry.port == port)
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn windows_single_port_command(port: u16) -> String {
+    format!(
+        "$connections=Get-NetTCPConnection -State Listen -LocalPort {port} -ErrorAction SilentlyContinue | Sort-Object LocalPort; foreach ($c in $connections) {{ $name=(Get-Process -Id $c.OwningProcess -ErrorAction SilentlyContinue).ProcessName; if ($name) {{ \"{{0}} {{1}} {{2}}\" -f $c.LocalPort, $c.OwningProcess, $name }} else {{ \"{{0}} {{1}}\" -f $c.LocalPort, $c.OwningProcess }} }}"
+    )
+}
+
 #[cfg(any(target_os = "windows", test))]
 fn windows_powershell_listening_ports_from_output(raw: String) -> Vec<RawPortEntry> {
     let mut entries = Vec::new();
-    let mut seen = HashMap::new();
+    let mut seen = HashSet::new();
     for line in raw.lines() {
         let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.len() < 2 {
@@ -398,7 +551,7 @@ fn windows_powershell_listening_ports_from_output(raw: String) -> Vec<RawPortEnt
         let Ok(port) = parts[0].parse::<u16>() else {
             continue;
         };
-        if seen.contains_key(&port) {
+        if seen.contains(&port) {
             continue;
         }
         let Ok(pid) = parts[1].parse::<u32>() else {
@@ -407,7 +560,7 @@ fn windows_powershell_listening_ports_from_output(raw: String) -> Vec<RawPortEnt
         if pid == 0 {
             continue;
         }
-        seen.insert(port, true);
+        seen.insert(port);
         entries.push(RawPortEntry {
             port,
             pid,
@@ -424,7 +577,7 @@ fn windows_powershell_listening_ports_from_output(raw: String) -> Vec<RawPortEnt
 #[cfg(target_os = "windows")]
 fn windows_netstat_listening_ports_from_output(raw: String) -> Vec<RawPortEntry> {
     let mut entries = Vec::new();
-    let mut seen = HashMap::new();
+    let mut seen = HashSet::new();
     for line in raw.lines().filter(|l| l.contains("LISTENING")) {
         let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.len() < 5 {
@@ -433,7 +586,7 @@ fn windows_netstat_listening_ports_from_output(raw: String) -> Vec<RawPortEntry>
         let Some(port) = parse_port_suffix(parts[1]) else {
             continue;
         };
-        if seen.contains_key(&port) {
+        if seen.contains(&port) {
             continue;
         }
         let Ok(pid) = parts[parts.len() - 1].parse::<u32>() else {
@@ -442,11 +595,11 @@ fn windows_netstat_listening_ports_from_output(raw: String) -> Vec<RawPortEntry>
         if pid == 0 {
             continue;
         }
-        seen.insert(port, true);
+        seen.insert(port);
         entries.push(RawPortEntry {
             port,
             pid,
-            process_name: windows_process_name(pid).unwrap_or_else(|| "unknown".to_string()),
+            process_name: "unknown".to_string(),
         });
     }
     entries
@@ -538,22 +691,15 @@ fn unix_process_details_from_result(
 
 #[cfg(target_os = "windows")]
 fn windows_batch_process_info(pids: &[u32]) -> HashMap<u32, RawProcessDetails> {
-    let mut map = HashMap::new();
-    for pid in pids {
-        let name = windows_process_name(*pid).unwrap_or_else(|| "unknown".to_string());
-        map.insert(
-            *pid,
-            RawProcessDetails {
-                pid: *pid,
-                ppid: None,
-                stat: "S".to_string(),
-                rss_kb: 0,
-                lstart: None,
-                command: name,
-            },
-        );
-    }
-    map
+    let Some(command) = windows_batch_process_info_command(pids) else {
+        return HashMap::new();
+    };
+    let raw = degrade_command_output(run_output(
+        "powershell",
+        ["-NoProfile", "-Command", &command],
+        Some(Duration::from_millis(5_000)),
+    ));
+    windows_batch_process_info_from_output(&raw)
 }
 
 #[cfg(target_os = "macos")]
@@ -612,25 +758,100 @@ where
 
 #[cfg(target_os = "windows")]
 fn windows_batch_cwd(pids: &[u32]) -> HashMap<u32, PathBuf> {
-    let mut map = HashMap::new();
-    for pid in pids {
-        let command = Command::new("powershell")
-            .args([
-                "-NoProfile",
-                "-Command",
-                &format!("(Get-Process -Id {pid} -ErrorAction SilentlyContinue).Path | Split-Path"),
-            ])
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
-            .output();
+    let Some(command) = windows_batch_cwd_command(pids) else {
+        return HashMap::new();
+    };
+    let raw = degrade_command_output(run_output(
+        "powershell",
+        ["-NoProfile", "-Command", &command],
+        Some(Duration::from_millis(5_000)),
+    ));
+    windows_batch_cwd_from_output(&raw)
+}
 
-        if let Ok(output) = command {
-            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !path.is_empty() {
-                map.insert(*pid, PathBuf::from(path));
-            }
-        }
+#[cfg(any(target_os = "windows", test))]
+fn windows_powershell_id_array(pids: &[u32]) -> Option<String> {
+    let mut ids = pids
+        .iter()
+        .copied()
+        .filter(|pid| *pid > 0)
+        .collect::<Vec<_>>();
+    ids.sort_unstable();
+    ids.dedup();
+    if ids.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "@({})",
+        ids.iter().map(u32::to_string).collect::<Vec<_>>().join(",")
+    ))
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn windows_batch_process_info_command(pids: &[u32]) -> Option<String> {
+    let ids = windows_powershell_id_array(pids)?;
+    Some(format!(
+        "$ids={ids}; Get-Process -Id $ids -ErrorAction SilentlyContinue | ForEach-Object {{ $cmd = if ($_.Path) {{ $_.Path }} else {{ $_.ProcessName }}; \"{{0}}`t{{1}}`t{{2}}\" -f $_.Id, [int64]($_.WorkingSet64 / 1KB), $cmd }}"
+    ))
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn windows_batch_process_info_from_output(raw: &str) -> HashMap<u32, RawProcessDetails> {
+    let mut map = HashMap::new();
+    for line in raw.lines() {
+        let mut parts = line.splitn(3, '\t');
+        let Some(pid) = parts.next().and_then(|value| value.parse::<u32>().ok()) else {
+            continue;
+        };
+        let rss_kb = parts
+            .next()
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(0);
+        let command = parts
+            .next()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or("unknown")
+            .trim()
+            .to_string();
+        map.insert(
+            pid,
+            RawProcessDetails {
+                pid,
+                ppid: None,
+                stat: "S".to_string(),
+                rss_kb,
+                lstart: None,
+                command,
+            },
+        );
+    }
+    map
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn windows_batch_cwd_command(pids: &[u32]) -> Option<String> {
+    let ids = windows_powershell_id_array(pids)?;
+    Some(format!(
+        "$ids={ids}; Get-Process -Id $ids -ErrorAction SilentlyContinue | ForEach-Object {{ if ($_.Path) {{ $dir=[System.IO.Path]::GetDirectoryName($_.Path); if ($dir) {{ \"{{0}}`t{{1}}\" -f $_.Id, $dir }} }} }}"
+    ))
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn windows_batch_cwd_from_output(raw: &str) -> HashMap<u32, PathBuf> {
+    let mut map = HashMap::new();
+    for line in raw.lines() {
+        let mut parts = line.splitn(2, '\t');
+        let Some(pid) = parts.next().and_then(|value| value.parse::<u32>().ok()) else {
+            continue;
+        };
+        let Some(path) = parts
+            .next()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            continue;
+        };
+        map.insert(pid, PathBuf::from(path));
     }
     map
 }
@@ -644,7 +865,7 @@ fn unix_all_processes_raw() -> Vec<RawProcessEntry> {
     ));
     let current_pid = std::process::id();
     let mut entries = Vec::new();
-    let mut seen = HashMap::new();
+    let mut seen = HashSet::new();
     for line in raw.lines() {
         let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.len() < 10 {
@@ -653,7 +874,7 @@ fn unix_all_processes_raw() -> Vec<RawProcessEntry> {
         let Ok(pid) = parts[0].parse::<u32>() else {
             continue;
         };
-        if pid <= 1 || pid == current_pid || seen.contains_key(&pid) {
+        if pid <= 1 || pid == current_pid || seen.contains(&pid) {
             continue;
         }
         let cpu = parts[1].parse::<f32>().unwrap_or(0.0);
@@ -662,7 +883,7 @@ fn unix_all_processes_raw() -> Vec<RawProcessEntry> {
         let lstart = Some(parts[4..9].join(" "));
         let command = parts[9..].join(" ");
         let process_name = basename(command.split_whitespace().next().unwrap_or("unknown"));
-        seen.insert(pid, true);
+        seen.insert(pid);
         entries.push(RawProcessEntry {
             pid,
             process_name,
@@ -685,7 +906,6 @@ fn windows_all_processes_raw() -> Vec<RawProcessEntry> {
     Vec::new()
 }
 
-#[cfg(unix)]
 #[cfg(unix)]
 fn unix_process_tree(pid: u32) -> Vec<ProcessTreeNode> {
     unix_process_tree_with(pid, |target_pid| {
@@ -933,6 +1153,11 @@ mod tests {
     use super::{darwin_listening_ports_from_result, unix_process_details_from_result};
     #[cfg(target_os = "linux")]
     use super::{linux_batch_cwd_with, linux_proc_details_with};
+    use super::{
+        windows_batch_cwd_command, windows_batch_cwd_from_output,
+        windows_batch_process_info_command, windows_batch_process_info_from_output,
+        windows_single_port_command,
+    };
     #[cfg(unix)]
     use crate::error::PortError;
     #[cfg(target_os = "linux")]
@@ -1102,5 +1327,56 @@ mod tests {
         assert_eq!(entries[1].port, 8080);
         assert_eq!(entries[1].pid, 7);
         assert_eq!(entries[1].process_name, "unknown");
+    }
+
+    #[test]
+    fn windows_single_port_command_filters_by_local_port() {
+        let command = windows_single_port_command(3000);
+
+        assert!(command.contains("Get-NetTCPConnection -State Listen -LocalPort 3000"));
+        assert!(command.contains("Get-Process -Id $c.OwningProcess"));
+    }
+
+    #[test]
+    fn windows_batch_process_info_parses_tab_delimited_rows() {
+        let raw = "42\t12000\tC:\\Projects\\app\\node.exe\nbad\trow\n7\t0\tpwsh\n";
+
+        let details = windows_batch_process_info_from_output(raw);
+
+        assert_eq!(details.len(), 2);
+        assert_eq!(details.get(&42).map(|detail| detail.rss_kb), Some(12_000));
+        assert_eq!(
+            details.get(&42).map(|detail| detail.command.as_str()),
+            Some("C:\\Projects\\app\\node.exe")
+        );
+        assert_eq!(
+            details.get(&7).map(|detail| detail.command.as_str()),
+            Some("pwsh")
+        );
+    }
+
+    #[test]
+    fn windows_batch_cwd_parses_tab_delimited_rows() {
+        let raw = "42\tC:\\Projects\\app\ninvalid\n7\tC:\\Windows\\System32\n";
+
+        let cwd = windows_batch_cwd_from_output(raw);
+
+        assert_eq!(cwd.len(), 2);
+        assert_eq!(
+            cwd.get(&42).map(|path| path.to_string_lossy().to_string()),
+            Some("C:\\Projects\\app".to_string())
+        );
+    }
+
+    #[test]
+    fn windows_batch_commands_dedupe_pids_and_use_one_process_query() {
+        let info_command =
+            windows_batch_process_info_command(&[42, 7, 42]).expect("command should be built");
+        let cwd_command = windows_batch_cwd_command(&[42, 7, 42]).expect("command should be built");
+
+        assert!(info_command.contains("$ids=@(7,42); Get-Process -Id $ids"));
+        assert!(cwd_command.contains("$ids=@(7,42); Get-Process -Id $ids"));
+        assert!(windows_batch_process_info_command(&[]).is_none());
+        assert!(windows_batch_cwd_command(&[]).is_none());
     }
 }

@@ -346,7 +346,6 @@ fn contains_wordish(haystack: &str, needle: &str) -> bool {
 mod tests {
     use super::*;
     use std::fs;
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn dev_process_rules_match_reference_names_and_filters() {
@@ -387,7 +386,7 @@ mod tests {
 
     #[test]
     fn package_and_marker_framework_detection_work() {
-        let root = temp_dir("framework");
+        let root = temp_project_dir("framework");
         fs::create_dir_all(&root).unwrap();
         fs::write(
             root.join("package.json"),
@@ -433,14 +432,5 @@ mod tests {
         );
     }
 
-    fn temp_dir(label: &str) -> std::path::PathBuf {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        std::env::temp_dir().join(format!(
-            "port-whisperer-{label}-{}-{nanos}",
-            std::process::id()
-        ))
-    }
+    use crate::test_support::temp_project_dir;
 }

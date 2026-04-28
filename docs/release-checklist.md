@@ -24,6 +24,8 @@ For the historical first beta release procedure, see:
   - `ports-rs-darwin-x64.tar.gz`
   - `ports-rs-linux-x64.tar.gz`
   - `ports-rs-windows-x64.zip`
+  - `ports-rs.rb`
+  - `SHA256SUMS`
 
 ## 3. Smoke Checks
 
@@ -34,8 +36,21 @@ For the historical first beta release procedure, see:
   - `ports.exe`
   - `whoisonport.exe`
 - Run at least one extracted binary locally and confirm it starts
+- Confirm `ports-rs.rb` contains the current version and both macOS archive URLs
+- Confirm `SHA256SUMS` contains all four binary archives
 
-## 4. Approval & npm Publish
+## 4. Homebrew Tap Follow-up
+
+- Download `ports-rs.rb` from the GitHub Release
+- Copy it to the tap repository as `Formula/ports-rs.rb`
+- Commit and push the tap repository
+- Verify:
+  - `brew tap EasyXdc/tap`
+  - `brew update`
+  - `brew reinstall ports-rs`
+  - `brew test ports-rs`
+
+## 5. Approval & npm Publish
 
 - Open the Actions run for the release tag
 - Review the resolved npm dist-tag (`latest` for stable, `next` only for prerelease builds)
@@ -44,7 +59,7 @@ For the historical first beta release procedure, see:
 - Verify npm metadata:
   - `npm view ports-rs version dist-tags`
 
-## 5. Final Sanity Check
+## 6. Final Sanity Check
 
 - Confirm the README install commands still match the published release assets
 - Confirm npm package version and GitHub tag version align

@@ -119,6 +119,13 @@ jobs:
       - name: Verify packaged release assets
         run: VERIFY_RELEASE_DIST=1 node scripts/verify-release.js
 
+      - name: Generate Homebrew formula
+        run: node scripts/homebrew-formula.js
+
+      - name: Generate checksums
+        shell: bash
+        run: shasum -a 256 dist/ports-rs-*.tar.gz dist/ports-rs-*.zip > dist/SHA256SUMS
+
       - name: Publish release assets
         uses: softprops/action-gh-release@v2
         with:

@@ -45,10 +45,6 @@ impl Default for DisplayConfig {
     }
 }
 
-pub fn render_header() {
-    print!("{}", render_header_with_config(&DisplayConfig::default()));
-}
-
 pub fn render_header_with_config(config: &DisplayConfig) -> String {
     if !config.decorative_header {
         return String::new();
@@ -136,10 +132,6 @@ fn render_slow_command_status_line(config: &DisplayConfig, header_width: usize) 
 
 fn stdout_is_terminal() -> bool {
     std::io::stdout().is_terminal()
-}
-
-pub fn display_port_table(ports: &[PortInfo], filtered: bool) {
-    display_port_table_with_config(ports, filtered, &DisplayConfig::default());
 }
 
 pub fn display_port_table_with_config(ports: &[PortInfo], filtered: bool, config: &DisplayConfig) {
@@ -251,10 +243,6 @@ fn port_summary_line(count: usize, filtered: bool) -> String {
         style::cyan("ports <number>"),
         style::gray(" for details") + &all_hint
     )
-}
-
-pub fn display_process_table(processes: &[ProcessInfo], filtered: bool) {
-    display_process_table_with_config(processes, filtered, &DisplayConfig::default());
 }
 
 pub fn display_process_table_with_config(
@@ -379,10 +367,6 @@ fn process_table_rows_plain(processes: &[ProcessInfo]) -> Vec<Vec<String>> {
         .collect()
 }
 
-pub fn display_port_detail(info: Option<&PortInfo>) {
-    display_port_detail_with_config(info, &DisplayConfig::default());
-}
-
 pub fn display_port_detail_with_config(info: Option<&PortInfo>, config: &DisplayConfig) {
     print!("{}", render_header_with_config(config));
     print!("{}", render_port_detail_body(info));
@@ -501,10 +485,6 @@ fn render_port_detail_body(info: Option<&PortInfo>) -> String {
     out
 }
 
-pub fn display_clean_results(orphaned: &[PortInfo], killed: &[u32], failed: &[u32]) {
-    display_clean_results_with_config(orphaned, killed, failed, &DisplayConfig::default());
-}
-
 pub fn display_clean_results_with_config(
     orphaned: &[PortInfo],
     killed: &[u32],
@@ -582,10 +562,6 @@ fn render_clean_results_body(orphaned: &[PortInfo], killed: &[u32], failed: &[u3
     }
     out.push('\n');
     out
-}
-
-pub fn display_watch_header() {
-    display_watch_header_with_config(&DisplayConfig::default());
 }
 
 pub fn display_watch_header_with_config(config: &DisplayConfig) {
@@ -795,7 +771,7 @@ fn push_border(
 }
 
 fn visible_len(s: &str) -> usize {
-    let mut visible = String::new();
+    let mut width = 0;
     let mut esc = false;
     for ch in s.chars() {
         if esc {
@@ -808,9 +784,9 @@ fn visible_len(s: &str) -> usize {
             esc = true;
             continue;
         }
-        visible.push(ch);
+        width += unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
     }
-    visible_width(&visible)
+    width
 }
 
 fn pad_to_width(s: &str, width: usize) -> String {
@@ -855,33 +831,14 @@ fn terminal_width_from_env() -> Option<usize> {
 }
 
 fn current_time_label() -> String {
-    std::process::Command::new("date")
-        .arg("+%T")
-        .output()
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map(|s| s.trim().to_string())
-        .unwrap_or_else(|| "--:--:--".to_string())
-}
-
-#[cfg(test)]
-fn strip_ansi(s: &str) -> String {
-    let mut out = String::new();
-    let mut esc = false;
-    for ch in s.chars() {
-        if esc {
-            if ch == 'm' {
-                esc = false;
-            }
-            continue;
-        }
-        if ch == '\x1b' {
-            esc = true;
-            continue;
-        }
-        out.push(ch);
-    }
-    out
+    let duration = std::time::SystemTime::UNIX_EPOCH
+        .elapsed()
+        .unwrap_or_default();
+    let total_secs = duration.as_secs();
+    let hours = (total_secs / 3600) % 24;
+    let minutes = (total_secs / 60) % 60;
+    let seconds = total_secs % 60;
+    format!("{hours:02}:{minutes:02}:{seconds:02}")
 }
 
 #[cfg(test)]
@@ -893,9 +850,10 @@ mod tests {
         render_empty_process_table_message, render_header_with_config, render_port_detail_body,
         render_port_table_output, render_process_table_output, render_process_tree_line,
         render_table, render_watch_event_line, resolve_header_width,
-        should_show_slow_command_spinner, slow_command_spinner_threshold, strip_ansi, visible_len,
+        should_show_slow_command_spinner, slow_command_spinner_threshold, visible_len,
     };
     use crate::model::{DisplayTime, PortInfo, ProcessInfo, ProcessStatus, ProcessTreeNode};
+    use crate::test_support::strip_ansi;
     use std::path::PathBuf;
     use std::time::Duration;
 

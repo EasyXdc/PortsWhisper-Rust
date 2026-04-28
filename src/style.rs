@@ -9,7 +9,6 @@ pub const MAGENTA: &str = "\x1b[35m";
 pub const CYAN: &str = "\x1b[36m";
 pub const WHITE: &str = "\x1b[37m";
 pub const GRAY: &str = "\x1b[90m";
-pub const BG_BLACK: &str = "\x1b[40m";
 
 static FORCE_ASCII: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
@@ -229,13 +228,6 @@ pub fn yellow_bold(s: impl AsRef<str>) -> String {
         return s.as_ref().to_string();
     }
     format!("{YELLOW}{BOLD}{}{RESET}", s.as_ref())
-}
-
-pub fn red_bold(s: impl AsRef<str>) -> String {
-    if no_color() {
-        return s.as_ref().to_string();
-    }
-    format!("{RED}{BOLD}{}{RESET}", s.as_ref())
 }
 
 pub fn framework(name: &str) -> String {

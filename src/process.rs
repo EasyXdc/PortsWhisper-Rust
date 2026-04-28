@@ -9,10 +9,12 @@ use crate::platform::{self, PlatformScanner};
 use crate::ports;
 use crate::util::{find_project_root, format_memory, format_uptime_from_lstart, path_basename};
 
+/// Return enriched process metadata for all running processes.
 pub fn get_all_processes() -> Vec<ProcessInfo> {
     get_all_processes_with(platform::native_scanner())
 }
 
+/// Return enriched process metadata for dev-related processes only.
 pub fn get_all_dev_processes() -> Vec<ProcessInfo> {
     get_all_dev_processes_with(platform::native_scanner())
 }
@@ -45,16 +47,15 @@ fn get_processes_with(scanner: &dyn PlatformScanner, dev_only: bool) -> Vec<Proc
         .map(|e| e.pid)
         .collect();
     let cwd_map = scanner.batch_cwd(&non_docker_pids);
-    let processes = enrich_process_entries_with_detectors(
+    enrich_process_entries_with_detectors(
         filtered_entries,
         &cwd_map,
         find_project_root,
         detect_framework,
-    );
-    let _by_pid = build_process_index(&processes);
-    processes
+    )
 }
 
+#[cfg(test)]
 fn build_process_index(processes: &[ProcessInfo]) -> std::collections::HashMap<u32, ProcessInfo> {
     processes
         .iter()
@@ -117,6 +118,7 @@ where
         .collect()
 }
 
+/// Return port entries whose processes are orphaned or zombie.
 pub fn find_orphaned_processes() -> Vec<PortInfo> {
     find_orphaned_processes_with(|| ports::get_listening_ports(false))
 }
@@ -131,6 +133,7 @@ where
         .collect()
 }
 
+/// Resolve a port number or PID to a killable target.
 pub fn resolve_kill_target(n: u32) -> Option<KillTargetResolution> {
     resolve_kill_target_with(n, ports::get_port_details, platform::pid_exists)
 }
@@ -147,7 +150,7 @@ where
     if n == 0 {
         return None;
     }
-    if n <= 65_535
+    if crate::model::is_likely_port(n)
         && let Some(info) = port_lookup(n as u16)
     {
         return Some(KillTargetResolution {
@@ -168,6 +171,7 @@ where
     None
 }
 
+/// Check whether a process is development-related based on name and command.
 pub fn keep_dev_process(info: &ProcessInfo) -> bool {
     is_dev_process(&info.process_name, &info.command)
 }
@@ -181,17 +185,16 @@ mod tests {
     };
     use crate::framework::detect_framework;
     use crate::model::{
-        KillResolutionKind, LogFile, PortInfo, ProcessStatus, ProcessTreeNode, RawPortEntry,
+        KillResolutionKind, LogFile, ProcessStatus, ProcessTreeNode, RawPortEntry,
         RawProcessDetails, RawProcessEntry,
     };
     use crate::platform::PlatformScanner;
-    use crate::test_support::FakePlatformScanner;
+    use crate::test_support::{FakePlatformScanner, fake_port, fake_port_with_status};
     use crate::util::find_project_root;
     use std::fs;
     use std::path::PathBuf;
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn kill_target_resolution_matches_node_reference_port_then_pid_behavior() {
@@ -225,7 +228,7 @@ mod tests {
 
     #[test]
     fn fake_platform_enriches_process_snapshot_and_dev_filtering() {
-        let project = temp_project("process-fake");
+        let project = temp_project_dir("process-fake");
         fs::write(
             project.join("package.json"),
             r#"{"dependencies":{"vite":"latest"}}"#,
@@ -281,7 +284,7 @@ mod tests {
 
     #[test]
     fn repeated_process_cwds_reuse_project_root_and_framework_detection() {
-        let project = temp_project("process-root-cache");
+        let project = temp_project_dir("process-root-cache");
         fs::write(
             project.join("package.json"),
             r#"{"dependencies":{"vite":"latest"}}"#,
@@ -335,7 +338,7 @@ mod tests {
 
     #[test]
     fn non_dev_processes_skip_project_root_and_framework_detection() {
-        let project = temp_project("process-skip-framework");
+        let project = temp_project_dir("process-skip-framework");
         fs::write(
             project.join("package.json"),
             r#"{"dependencies":{"vite":"latest"}}"#,
@@ -394,9 +397,9 @@ mod tests {
     #[test]
     fn clean_detection_matches_node_reference_status_filter() {
         let ports = vec![
-            port_with_status(3000, 30, ProcessStatus::Healthy),
-            port_with_status(3001, 31, ProcessStatus::Orphaned),
-            port_with_status(3002, 32, ProcessStatus::Zombie),
+            fake_port_with_status(3000, 30, ProcessStatus::Healthy),
+            fake_port_with_status(3001, 31, ProcessStatus::Orphaned),
+            fake_port_with_status(3002, 32, ProcessStatus::Zombie),
         ];
 
         let orphaned = find_orphaned_processes_with(|| ports.clone());
@@ -477,29 +480,6 @@ mod tests {
         assert_eq!(fake.cwd_calls.lock().unwrap().as_slice(), &[vec![42]]);
     }
 
-    fn fake_port(port: u16, pid: u32) -> PortInfo {
-        port_with_status(port, pid, ProcessStatus::Healthy)
-    }
-
-    fn port_with_status(port: u16, pid: u32, status: ProcessStatus) -> PortInfo {
-        PortInfo {
-            port,
-            pid,
-            process_name: "node".to_string(),
-            raw_name: "node".to_string(),
-            command: "node server.js".to_string(),
-            cwd: None,
-            project_name: None,
-            framework: None,
-            uptime: None,
-            start_time: None,
-            status,
-            memory: None,
-            git_branch: None,
-            process_tree: Vec::new(),
-        }
-    }
-
     fn fake_process_info(pid: u32, process_name: &str, command: &str) -> crate::model::ProcessInfo {
         crate::model::ProcessInfo {
             pid,
@@ -518,18 +498,7 @@ mod tests {
         }
     }
 
-    fn temp_project(label: &str) -> std::path::PathBuf {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "port-whisperer-{label}-{}-{nanos}",
-            std::process::id()
-        ));
-        fs::create_dir_all(&root).unwrap();
-        root
-    }
+    use crate::test_support::temp_project_dir;
 
     fn project_name(path: &std::path::Path) -> String {
         path.file_name().unwrap().to_string_lossy().to_string()

@@ -88,16 +88,7 @@ fn dispatch(parsed: ParsedCli) -> i32 {
             }
             ports = filter_ports(ports, &filters);
             if parsed.json {
-                return match render_list_json(&ports, &filters) {
-                    Ok(output) => {
-                        println!("{output}");
-                        0
-                    }
-                    Err(err) => {
-                        eprintln!("failed to render json for ports: {err}");
-                        1
-                    }
-                };
+                return json_output::print_json_output(render_list_json(&ports, &filters));
             }
             let display_config =
                 display::with_command_elapsed(&display_config, started_at.elapsed());
@@ -107,16 +98,7 @@ fn dispatch(parsed: ParsedCli) -> i32 {
         }
         CliCommand::Help => {
             if parsed.json {
-                return match format_help_json() {
-                    Ok(output) => {
-                        println!("{output}");
-                        0
-                    }
-                    Err(err) => {
-                        eprintln!("failed to render json for ports help: {err}");
-                        1
-                    }
-                };
+                return json_output::print_json_output(format_help_json());
             }
             print_help();
             0
@@ -174,16 +156,7 @@ fn dispatch(parsed: ParsedCli) -> i32 {
                     .unwrap_or(std::cmp::Ordering::Equal)
             });
             if parsed.json {
-                return match render_ps_json(&processes, &filters) {
-                    Ok(output) => {
-                        println!("{output}");
-                        0
-                    }
-                    Err(err) => {
-                        eprintln!("failed to render json for ports ps: {err}");
-                        1
-                    }
-                };
+                return json_output::print_json_output(render_ps_json(&processes, &filters));
             }
             display::display_process_table_with_config(
                 &processes,
@@ -228,19 +201,7 @@ fn dispatch(parsed: ParsedCli) -> i32 {
             }
             ports = filter_ports(ports, &filters);
             if parsed.json {
-                return match render_list_json(&ports, &filters) {
-                    Ok(output) => {
-                        println!("{output}");
-                        0
-                    }
-                    Err(err) => {
-                        eprintln!(
-                            "failed to render json for ports {}-{}: {err}",
-                            range.start, range.end
-                        );
-                        1
-                    }
-                };
+                return json_output::print_json_output(render_list_json(&ports, &filters));
             }
             display::display_port_table_with_config(&ports, !parsed.show_all, &display_config);
             print_warning_lines(&error::drain_user_warnings());
@@ -248,16 +209,8 @@ fn dispatch(parsed: ParsedCli) -> i32 {
         }
         CliCommand::Unknown(other) => {
             if parsed.json {
-                return match format_unknown_command_json(&other) {
-                    Ok(output) => {
-                        println!("{output}");
-                        1
-                    }
-                    Err(err) => {
-                        eprintln!("failed to render json for ports {other}: {err}");
-                        1
-                    }
-                };
+                let exit = json_output::print_json_output(format_unknown_command_json(&other));
+                return if exit == 0 { 1 } else { exit };
             }
             for line in unknown_command_lines(&other) {
                 println!("{line}");
@@ -338,9 +291,7 @@ fn parse_command(
     match args.first().map(String::as_str) {
         None => CliCommand::List(parse_query_filters(args)),
         Some("help" | "--help" | "-h") => CliCommand::Help,
-        Some("completion") => CliCommand::Completion(
-            completion_shell.expect("completion subcommand should be validated by cli_args::parse"),
-        ),
+        Some("completion") => CliCommand::Completion(completion_shell.unwrap_or(Shell::Bash)),
         Some("check") => CliCommand::Check(parse_check_ports(&args[1..])),
         Some("open") => CliCommand::Open(parse_open_port(&args[1..])),
         Some("ps") => CliCommand::Ps(parse_query_filters(&args[1..])),
@@ -422,19 +373,17 @@ fn parse_query_filters(args: &[String]) -> QueryFilters {
 
 fn parse_check_ports(args: &[String]) -> Vec<u16> {
     args.iter()
-        .map(|value| {
-            value
-                .parse::<u16>()
-                .expect("check ports should be validated by cli_args::parse")
-        })
+        .filter_map(|value| value.parse::<u16>().ok())
         .collect()
 }
 
 fn parse_open_port(args: &[String]) -> u16 {
     args.first()
-        .expect("open port should be validated by cli_args::parse")
-        .parse::<u16>()
-        .expect("open port should be validated by cli_args::parse")
+        .and_then(|v| v.parse::<u16>().ok())
+        .unwrap_or_else(|| {
+            eprintln!("Warning: invalid port number, defaulting to 80");
+            80
+        })
 }
 
 fn is_query_filter_flag(arg: &str) -> bool {
@@ -519,16 +468,11 @@ fn run_port_detail(
     }
     .filter(|info| matches_port_filters(info, filters));
     if json {
-        return match render_port_detail_json(port, info.as_ref(), filters) {
-            Ok(output) => {
-                println!("{output}");
-                0
-            }
-            Err(err) => {
-                eprintln!("failed to render json for ports {port}: {err}");
-                1
-            }
-        };
+        return json_output::print_json_output(render_port_detail_json(
+            port,
+            info.as_ref(),
+            filters,
+        ));
     }
     display::display_port_detail_with_config(info.as_ref(), display_config);
     print_warning_lines(&error::drain_user_warnings());
@@ -664,6 +608,7 @@ mod tests {
     use crate::display::DisplayConfig;
     use crate::error::{PortError, drain_user_warnings, record_user_warning, verbose_test_lock};
     use crate::model::{PortInfo, ProcessInfo, ProcessStatus};
+    use crate::test_support::fake_port_with_status;
     use clap_complete::Shell;
     use serde_json::json;
     use std::cell::RefCell;
@@ -1007,7 +952,10 @@ mod tests {
 
     #[test]
     fn clean_prompt_flow_only_kills_on_yes_answer() {
-        let orphaned = vec![fake_port(3000, 42), fake_port(3001, 43)];
+        let orphaned = vec![
+            fake_port_with_status(3000, 42, ProcessStatus::Orphaned),
+            fake_port_with_status(3001, 43, ProcessStatus::Orphaned),
+        ];
         let attempts = RefCell::new(Vec::new());
         let outcome = apply_clean_answer(&orphaned, Some("n"), |pid, signal| {
             attempts.borrow_mut().push((pid, signal.to_string()));
@@ -1062,7 +1010,7 @@ mod tests {
     #[test]
     fn clean_path_reuses_single_orphaned_snapshot() {
         let calls = RefCell::new(0usize);
-        let orphaned = vec![fake_port(3000, 42)];
+        let orphaned = vec![fake_port_with_status(3000, 42, ProcessStatus::Orphaned)];
 
         let exit = run_clean_with(
             || {
@@ -1167,8 +1115,11 @@ mod tests {
             ms: 10_000,
         });
 
-        let rendered = render_list_json(&[fake_port(3000, 42)], &QueryFilters::default())
-            .expect("json render should succeed");
+        let rendered = render_list_json(
+            &[fake_port_with_status(3000, 42, ProcessStatus::Orphaned)],
+            &QueryFilters::default(),
+        )
+        .expect("json render should succeed");
 
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&rendered).expect("json should parse"),
@@ -1269,7 +1220,12 @@ mod tests {
         drain_user_warnings();
 
         let rendered = run_clean_json_with(
-            || vec![fake_port(3000, 42), fake_port(3001, 43)],
+            || {
+                vec![
+                    fake_port_with_status(3000, 42, ProcessStatus::Orphaned),
+                    fake_port_with_status(3001, 43, ProcessStatus::Orphaned),
+                ]
+            },
             |pid, _signal| pid == 42,
         )
         .expect("json render should succeed");
@@ -1324,8 +1280,11 @@ mod tests {
             ms: 10_000,
         });
 
-        let rendered = run_clean_json_with(|| vec![fake_port(3000, 42)], |_pid, _signal| true)
-            .expect("json render should succeed");
+        let rendered = run_clean_json_with(
+            || vec![fake_port_with_status(3000, 42, ProcessStatus::Orphaned)],
+            |_pid, _signal| true,
+        )
+        .expect("json render should succeed");
 
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&rendered.output).expect("json should parse"),
@@ -1364,7 +1323,12 @@ mod tests {
         drain_user_warnings();
 
         let exit = run_clean_json_with(
-            || vec![fake_port(3000, 42), fake_port(3001, 43)],
+            || {
+                vec![
+                    fake_port_with_status(3000, 42, ProcessStatus::Orphaned),
+                    fake_port_with_status(3001, 43, ProcessStatus::Orphaned),
+                ]
+            },
             |pid, _signal| pid == 42,
         )
         .expect("json render should succeed")
@@ -1480,32 +1444,13 @@ mod tests {
         );
     }
 
-    fn fake_port(port: u16, pid: u32) -> PortInfo {
-        PortInfo {
-            port,
-            pid,
-            process_name: "node".to_string(),
-            raw_name: "node".to_string(),
-            command: "node server.js".to_string(),
-            cwd: None,
-            project_name: None,
-            framework: None,
-            uptime: None,
-            start_time: None,
-            status: ProcessStatus::Orphaned,
-            memory: None,
-            git_branch: None,
-            process_tree: Vec::new(),
-        }
-    }
-
     fn fake_port_with_filters(
         port: u16,
         pid: u32,
         project: Option<&str>,
         framework: Option<&str>,
     ) -> PortInfo {
-        let mut info = fake_port(port, pid);
+        let mut info = fake_port_with_status(port, pid, ProcessStatus::Orphaned);
         info.project_name = project.map(str::to_string);
         info.framework = framework.map(str::to_string);
         info
@@ -1540,18 +1485,26 @@ fn run_clean(display_config: &display::DisplayConfig) -> i32 {
 }
 
 fn run_clean_json() -> i32 {
-    match run_clean_json_with(scanner::find_orphaned_processes, kill::kill_process) {
-        Ok(result) => {
-            println!("{}", result.output);
-            result.exit_code
-        }
-        Err((message, exit_code)) => {
-            eprintln!("{message}");
-            exit_code
-        }
-    }
+    let orphaned = scanner::find_orphaned_processes();
+    let outcome = apply_clean_json(&orphaned, kill::kill_process);
+    let warnings = drained_warning_messages();
+    let exit_code = outcome.exit_code;
+    let json_exit = json_output::print_json_output(json_output::render_json(
+        &json_output::CommandEnvelope::ok(
+            "ports clean",
+            json_output::clean_payload(
+                outcome.confirmed,
+                &orphaned,
+                outcome.killed,
+                outcome.failed,
+            ),
+        )
+        .with_warnings(warnings),
+    ));
+    if json_exit != 0 { json_exit } else { exit_code }
 }
 
+#[cfg(test)]
 fn run_clean_json_with<FindOrphaned, Kill>(
     find_orphaned: FindOrphaned,
     kill: Kill,
@@ -1582,6 +1535,7 @@ where
     .map_err(|err| (format!("failed to render json for ports clean: {err}"), 1))
 }
 
+#[cfg(test)]
 #[derive(Debug, Eq, PartialEq)]
 struct CleanJsonOutput {
     output: String,

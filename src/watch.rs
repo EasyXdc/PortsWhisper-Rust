@@ -275,9 +275,7 @@ where
 {
     let mut ports: Vec<u16> = entries
         .iter()
-        .filter(|entry| {
-            entry.process_name.starts_with("com.docke") || entry.process_name == "docker"
-        })
+        .filter(|entry| crate::framework::is_docker_process(&entry.process_name))
         .map(|entry| entry.port)
         .collect();
     ports.sort_unstable();

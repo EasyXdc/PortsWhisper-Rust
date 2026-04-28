@@ -13,18 +13,14 @@ struct KillJsonResult {
 }
 
 pub fn kill_process(pid: u32, signal: &str) -> bool {
-    let (program, args) = build_kill_command(pid, signal, cfg!(target_os = "windows"));
-    Command::new(program)
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    crate::platform::native_scanner().kill_process(pid, signal)
 }
 
-fn build_kill_command(pid: u32, signal: &str, windows_mode: bool) -> (String, Vec<String>) {
+pub(crate) fn build_kill_command(
+    pid: u32,
+    signal: &str,
+    windows_mode: bool,
+) -> (String, Vec<String>) {
     if windows_mode {
         if signal == "SIGKILL" {
             return (
@@ -46,6 +42,18 @@ fn build_kill_command(pid: u32, signal: &str, windows_mode: bool) -> (String, Ve
         "-TERM"
     };
     ("kill".to_string(), vec![sig.to_string(), pid.to_string()])
+}
+
+pub(crate) fn execute_kill_command(pid: u32, signal: &str, windows_mode: bool) -> bool {
+    let (program, args) = build_kill_command(pid, signal, windows_mode);
+    Command::new(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
 }
 
 fn parse_requested_signal(args: &[String]) -> Option<String> {
@@ -127,16 +135,9 @@ pub fn run_kill(args: &[String]) -> i32 {
 pub fn run_kill_json(args: &[String]) -> i32 {
     let result = run_kill_json_with(args, scanner::resolve_kill_target, kill_process);
     let exit_code = result.exit_code;
-    match json_output::render_json(&kill_json_envelope(args, result)) {
-        Ok(output) => {
-            println!("{output}");
-            exit_code
-        }
-        Err(err) => {
-            eprintln!("failed to render json for ports kill: {err}");
-            1
-        }
-    }
+    let json_exit =
+        json_output::print_json_output(json_output::render_json(&kill_json_envelope(args, result)));
+    if json_exit != 0 { json_exit } else { exit_code }
 }
 
 fn command_string(args: &[String]) -> String {
@@ -297,7 +298,7 @@ where
             continue;
         }
         let Some(resolved) = resolve(n) else {
-            let msg = if n <= 65_535 {
+            let msg = if crate::model::is_likely_port(n) {
                 format!("No listener on :{n} and no process with PID {n}")
             } else {
                 format!("No process with PID {n}")
@@ -505,11 +506,14 @@ fn validate_range_target(target: &str, start: u32, end: u32) -> Result<(), Strin
             "Invalid range: {target} (start must be less than end)"
         ));
     }
+    if start < 1 || end > crate::model::MAX_PORT {
+        return Err(format!(
+            "Invalid range: {target} (ports must be 1-{})",
+            crate::model::MAX_PORT
+        ));
+    }
     if end - start > 1000 {
         return Err(format!("Range too large: {target} (max 1000 ports)"));
-    }
-    if start < 1 || end > 65_535 {
-        return Err(format!("Invalid range: {target} (ports must be 1-65535)"));
     }
     Ok(())
 }
@@ -521,7 +525,7 @@ mod tests {
         render_kill_target_line, run_kill_json_with, validate_range_target,
     };
     use crate::json_output;
-    use crate::model::{KillResolutionKind, KillTargetResolution, PortInfo, ProcessStatus};
+    use crate::model::{KillResolutionKind, KillTargetResolution};
     use serde_json::json;
     use std::cell::RefCell;
 
@@ -923,7 +927,7 @@ mod tests {
         crate::style::set_force_ascii(true);
 
         let success = strip_ansi(
-            render_kill_target_line(
+            &render_kill_target_line(
                 &KillJsonResult {
                     signal: "SIGTERM".to_string(),
                     targets: vec![json_output::KillTargetPayload {
@@ -944,7 +948,7 @@ mod tests {
         );
 
         let failure = strip_ansi(
-            render_kill_target_line(
+            &render_kill_target_line(
                 &KillJsonResult {
                     signal: "SIGTERM".to_string(),
                     targets: vec![json_output::KillTargetPayload {
@@ -976,41 +980,6 @@ mod tests {
         );
     }
 
-    fn fake_port(port: u16, pid: u32) -> PortInfo {
-        PortInfo {
-            port,
-            pid,
-            process_name: "node".to_string(),
-            raw_name: "node".to_string(),
-            command: "node server.js".to_string(),
-            cwd: None,
-            project_name: None,
-            framework: None,
-            uptime: None,
-            start_time: None,
-            status: ProcessStatus::Healthy,
-            memory: None,
-            git_branch: None,
-            process_tree: Vec::new(),
-        }
-    }
-
-    fn strip_ansi(s: String) -> String {
-        let mut out = String::new();
-        let mut esc = false;
-        for ch in s.chars() {
-            if esc {
-                if ch == 'm' {
-                    esc = false;
-                }
-                continue;
-            }
-            if ch == '\x1b' {
-                esc = true;
-                continue;
-            }
-            out.push(ch);
-        }
-        out
-    }
+    use crate::test_support::fake_port;
+    use crate::test_support::strip_ansi;
 }

@@ -60,6 +60,17 @@ whoisonport
 
 If you want to test a future prerelease build later, use the `next` dist-tag explicitly.
 
+### Homebrew
+
+After the Homebrew tap is published:
+
+```bash
+brew tap EasyXdc/tap
+brew install ports-rs
+```
+
+The release workflow generates the formula asset used by the tap. Maintainer notes live in [`docs/homebrew.md`](./docs/homebrew.md).
+
 ### Cargo
 
 If you already use Rust and want to install from source:
@@ -80,6 +91,8 @@ Current asset naming:
 - `ports-rs-darwin-x64.tar.gz`
 - `ports-rs-linux-x64.tar.gz`
 - `ports-rs-windows-x64.zip`
+- `ports-rs.rb`
+- `SHA256SUMS`
 
 Each archive contains:
 

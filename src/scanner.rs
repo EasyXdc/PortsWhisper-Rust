@@ -2,8 +2,9 @@ use crate::model::{KillTargetResolution, PortInfo, ProcessInfo};
 
 pub use crate::framework::{
     detect_framework, detect_framework_from_command, detect_framework_from_image,
-    detect_framework_from_name, is_dev_process, is_docker_process, summarize_command,
+    detect_framework_from_name, summarize_command,
 };
+pub use crate::framework::{is_dev_process, is_docker_process};
 
 pub fn get_listening_ports(detailed: bool) -> Vec<PortInfo> {
     crate::ports::get_listening_ports(detailed)

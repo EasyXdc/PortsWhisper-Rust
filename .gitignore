@@ -8,3 +8,4 @@ vendor/
 *.tar.gz
 *.zip
 npm-debug.log*
+logs/

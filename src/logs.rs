@@ -1,11 +1,14 @@
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 use crate::error::PortError;
 use crate::json_output;
-use crate::model::{KillResolutionKind, LogFdKind, LogFile};
+use crate::model::{KillResolutionKind, LogFdKind, LogFile, TailCommand};
 use crate::scanner;
 use crate::style;
-use crate::util::{prompt_line, run_output};
+use crate::util::prompt_line;
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
 struct LogsRequest {
@@ -20,6 +23,7 @@ struct LogsRequest {
 #[derive(Debug, Eq, PartialEq)]
 enum LogsRequestError {
     MissingValue(&'static str),
+    InvalidValue(&'static str),
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -46,6 +50,13 @@ pub fn run_logs(args: &[String]) -> i32 {
             );
             return 1;
         }
+        Err(LogsRequestError::InvalidValue(flag)) => {
+            println!(
+                "{}",
+                style::red(format!("\n  {} invalid value for {flag}\n", glyphs.failure))
+            );
+            return 1;
+        }
     };
     if parsed.targets.is_empty() {
         for line in logs_usage_lines() {
@@ -64,7 +75,7 @@ pub fn run_logs(args: &[String]) -> i32 {
         return 1;
     };
     let Some(resolved) = scanner::resolve_kill_target(target) else {
-        let msg = if target <= 65_535 {
+        let msg = if crate::model::is_likely_port(target) {
             format!("No listener on :{target} and no process with PID {target}")
         } else {
             format!("No process with PID {target}")
@@ -185,6 +196,17 @@ pub fn run_logs(args: &[String]) -> i32 {
         );
     }
 
+    if parsed.follow && !crate::platform::native_scanner().supports_system_log_follow() {
+        println!(
+            "{}",
+            style::red(format!(
+                "\n  {} follow mode is not supported for system logs on this platform\n",
+                glyphs.failure
+            ))
+        );
+        return 1;
+    }
+
     if let Some(sys_cmd) =
         get_system_log_command_with_since(resolved.pid, parsed.follow, parsed.since.as_deref())
     {
@@ -216,50 +238,67 @@ pub fn run_logs(args: &[String]) -> i32 {
 
 pub fn run_logs_json(args: &[String]) -> i32 {
     let command = format!("ports {}", args.join(" "));
-    match render_logs_json_result(
-        &command,
-        run_logs_json_with(
-            args,
-            scanner::resolve_kill_target,
-            get_process_log_files,
-            read_log_output,
-            get_system_log_command_with_since,
-            run_shell_output,
-        ),
-    ) {
-        Ok((output, exit_code)) => {
-            println!("{output}");
-            exit_code
+    let result = run_logs_json_with(
+        args,
+        scanner::resolve_kill_target,
+        get_process_log_files,
+        read_log_output,
+        get_system_log_command_with_since,
+        run_shell_output,
+    );
+    let (json_result, exit_code) = match result {
+        Ok(r) => {
+            let exit_code = r.exit_code;
+            (render_logs_ok_json(&command, r), exit_code)
         }
-        Err(err) => {
-            eprintln!("failed to render json for ports logs: {err}");
-            1
+        Err(e) => {
+            let exit_code = e.exit_code;
+            (render_logs_err_json(&command, e), exit_code)
         }
-    }
+    };
+    let json_exit = json_output::print_json_output(json_result);
+    if json_exit != 0 { json_exit } else { exit_code }
 }
 
-fn render_logs_json_result(
-    command: &str,
-    result: Result<LogsJsonResult, LogsJsonError>,
-) -> serde_json::Result<(String, i32)> {
+fn render_logs_ok_json(command: &str, result: LogsJsonResult) -> serde_json::Result<String> {
     let warnings = crate::error::drain_user_warnings()
         .into_iter()
         .map(|warning| warning.user_message())
         .collect::<Vec<_>>();
+    json_output::render_json(
+        &json_output::CommandEnvelope::ok(command, result.payload).with_warnings(warnings),
+    )
+}
+
+fn render_logs_err_json(command: &str, err: LogsJsonError) -> serde_json::Result<String> {
+    let warnings = crate::error::drain_user_warnings()
+        .into_iter()
+        .map(|warning| warning.user_message())
+        .collect::<Vec<_>>();
+    json_output::render_json(
+        &json_output::CommandEnvelope::<json_output::LogsPayload>::err(
+            command,
+            err.code,
+            err.message,
+        )
+        .with_warnings(warnings),
+    )
+}
+
+#[cfg(test)]
+fn render_logs_json_result(
+    command: &str,
+    result: Result<LogsJsonResult, LogsJsonError>,
+) -> serde_json::Result<(String, i32)> {
     match result {
-        Ok(result) => json_output::render_json(
-            &json_output::CommandEnvelope::ok(command, result.payload).with_warnings(warnings),
-        )
-        .map(|output| (output, result.exit_code)),
-        Err(err) => json_output::render_json(
-            &json_output::CommandEnvelope::<json_output::LogsPayload>::err(
-                command,
-                err.code,
-                err.message,
-            )
-            .with_warnings(warnings),
-        )
-        .map(|output| (output, err.exit_code)),
+        Ok(result) => {
+            let exit_code = result.exit_code;
+            render_logs_ok_json(command, result).map(|output| (output, exit_code))
+        }
+        Err(err) => {
+            let exit_code = err.exit_code;
+            render_logs_err_json(command, err).map(|output| (output, exit_code))
+        }
     }
 }
 
@@ -269,6 +308,12 @@ fn parse_logs_request(args: &[String]) -> Result<LogsRequest, LogsRequestError> 
     let lines = parse_lines(args).to_string();
     let grep = parse_flag_value(args, "--grep")?.map(ToOwned::to_owned);
     let since = parse_flag_value(args, "--since")?.map(ToOwned::to_owned);
+    if since
+        .as_deref()
+        .is_some_and(|value| !valid_since_value(value))
+    {
+        return Err(LogsRequestError::InvalidValue("--since"));
+    }
     let mut targets = Vec::new();
     let mut iter = args.iter().skip(1).peekable();
     while let Some(arg) = iter.next() {
@@ -298,6 +343,10 @@ fn parse_logs_request(args: &[String]) -> Result<LogsRequest, LogsRequestError> 
     })
 }
 
+fn valid_since_value(value: &str) -> bool {
+    !value.is_empty() && !value.starts_with('-') && crate::model::is_shell_safe(value)
+}
+
 fn run_logs_json_with<Resolve, Discover, ReadLog, SystemCmd, RunSystem>(
     args: &[String],
     resolve: Resolve,
@@ -317,6 +366,11 @@ where
         LogsRequestError::MissingValue(flag) => LogsJsonError {
             code: "usage".to_string(),
             message: format!("missing value for {flag}"),
+            exit_code: 1,
+        },
+        LogsRequestError::InvalidValue(flag) => LogsJsonError {
+            code: "usage".to_string(),
+            message: format!("invalid value for {flag}"),
             exit_code: 1,
         },
     })?;
@@ -490,27 +544,10 @@ fn log_source_payload(file: &LogFile, command: Option<String>) -> json_output::L
 }
 
 pub fn get_process_log_files(pid: u32) -> Vec<LogFile> {
-    let mut files = if cfg!(target_os = "linux") {
-        let proc_files = log_files_from_proc_fd(pid);
-        let lsof_files = log_files_from_lsof_result(run_output(
-            "lsof",
-            ["-p", &pid.to_string()],
-            Some(std::time::Duration::from_millis(5000)),
-        ));
-        merge_log_discovery_results(proc_files, lsof_files)
-    } else {
-        let mut files = Vec::new();
-        if cfg!(target_os = "macos") {
-            files.extend(log_files_from_lsof_result(run_output(
-                "lsof",
-                ["-p", &pid.to_string()],
-                Some(std::time::Duration::from_millis(5000)),
-            )));
-        }
-        files
-    };
+    let scanner = crate::platform::native_scanner();
+    let mut files = scanner.get_process_log_files(pid);
 
-    if let Some(cwd) = get_process_cwd(pid) {
+    if let Some(cwd) = scanner.get_cwd_for_pid(pid) {
         for rel in [
             ".next/server.log",
             "logs/development.log",
@@ -534,7 +571,89 @@ pub fn get_process_log_files(pid: u32) -> Vec<LogFile> {
     sort_and_dedupe_log_files(files)
 }
 
-fn merge_log_discovery_results(primary: Vec<LogFile>, fallback: Vec<LogFile>) -> Vec<LogFile> {
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
+pub(crate) fn log_files_from_lsof_result(result: Result<String, PortError>) -> Vec<LogFile> {
+    let mut files = Vec::new();
+    let raw = result.ok().unwrap_or_default();
+    for line in raw.lines().skip(1) {
+        let cols: Vec<&str> = line.split_whitespace().collect();
+        if cols.len() < 9 {
+            continue;
+        }
+        let fd = cols[3];
+        let kind = cols[4];
+        let name = cols[8..].join(" ");
+        if (fd == "1w" || fd == "2w") && kind == "REG" {
+            files.push(LogFile {
+                path: PathBuf::from(name),
+                fd: if fd == "1w" {
+                    LogFdKind::Stdout
+                } else {
+                    LogFdKind::Stderr
+                },
+                kind: "redirect".to_string(),
+                priority: 1,
+            });
+        } else if kind == "REG" && fd.ends_with('w') && is_log_like_path(&name) {
+            files.push(LogFile {
+                path: PathBuf::from(name),
+                fd: LogFdKind::File,
+                kind: "logfile".to_string(),
+                priority: 2,
+            });
+        }
+    }
+    files
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn log_files_from_proc_fd(pid: u32) -> Vec<LogFile> {
+    let mut files = Vec::new();
+    let fd_dir = PathBuf::from(format!("/proc/{pid}/fd"));
+    if let Ok(entries) = std::fs::read_dir(fd_dir) {
+        for entry in entries.flatten() {
+            let fd_name = entry.file_name().to_string_lossy().to_string();
+            if let Ok(target) = std::fs::read_link(entry.path()) {
+                let target_s = target.to_string_lossy();
+                if fd_name == "1"
+                    && !target_s.starts_with("/dev/")
+                    && !target_s.starts_with("pipe:")
+                {
+                    files.push(LogFile {
+                        path: target,
+                        fd: LogFdKind::Stdout,
+                        kind: "redirect".to_string(),
+                        priority: 1,
+                    });
+                } else if fd_name == "2"
+                    && !target_s.starts_with("/dev/")
+                    && !target_s.starts_with("pipe:")
+                {
+                    files.push(LogFile {
+                        path: target,
+                        fd: LogFdKind::Stderr,
+                        kind: "redirect".to_string(),
+                        priority: 1,
+                    });
+                } else if is_log_like_path(&target_s) {
+                    files.push(LogFile {
+                        path: target,
+                        fd: LogFdKind::File,
+                        kind: "logfile".to_string(),
+                        priority: 2,
+                    });
+                }
+            }
+        }
+    }
+    files
+}
+
+#[cfg(any(target_os = "linux", test))]
+pub(crate) fn merge_log_discovery_results(
+    primary: Vec<LogFile>,
+    fallback: Vec<LogFile>,
+) -> Vec<LogFile> {
     let mut files = primary;
     files.extend(fallback);
     sort_and_dedupe_log_files(files)
@@ -593,6 +712,7 @@ pub(crate) fn sort_and_dedupe_log_files(mut files: Vec<LogFile>) -> Vec<LogFile>
         .collect()
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 pub(crate) fn is_log_like_path(name: &str) -> bool {
     let lower = name.to_lowercase();
     lower.ends_with(".log")
@@ -606,108 +726,7 @@ pub(crate) fn is_log_like_path(name: &str) -> bool {
         || lower.contains("stderr")
 }
 
-fn get_process_cwd(pid: u32) -> Option<PathBuf> {
-    if cfg!(target_os = "linux") {
-        std::fs::read_link(format!("/proc/{pid}/cwd")).ok()
-    } else if cfg!(target_os = "macos") {
-        get_process_cwd_from_lsof_result(run_output(
-            "lsof",
-            ["-p", &pid.to_string(), "-d", "cwd", "-Fn"],
-            Some(std::time::Duration::from_millis(3000)),
-        ))
-    } else if cfg!(target_os = "windows") {
-        run_output(
-            "powershell",
-            [
-                "-Command",
-                &format!("(Get-Process -Id {pid}).Path | Split-Path"),
-            ],
-            Some(std::time::Duration::from_millis(5000)),
-        )
-        .ok()
-        .filter(|s| !s.is_empty())
-        .map(PathBuf::from)
-    } else {
-        None
-    }
-}
-
-fn log_files_from_lsof_result(result: Result<String, PortError>) -> Vec<LogFile> {
-    let mut files = Vec::new();
-    let raw = result.ok().unwrap_or_default();
-    for line in raw.lines().skip(1) {
-        let cols: Vec<&str> = line.split_whitespace().collect();
-        if cols.len() < 9 {
-            continue;
-        }
-        let fd = cols[3];
-        let kind = cols[4];
-        let name = cols[8..].join(" ");
-        if (fd == "1w" || fd == "2w") && kind == "REG" {
-            files.push(LogFile {
-                path: PathBuf::from(name),
-                fd: if fd == "1w" {
-                    LogFdKind::Stdout
-                } else {
-                    LogFdKind::Stderr
-                },
-                kind: "redirect".to_string(),
-                priority: 1,
-            });
-        } else if kind == "REG" && fd.ends_with('w') && is_log_like_path(&name) {
-            files.push(LogFile {
-                path: PathBuf::from(name),
-                fd: LogFdKind::File,
-                kind: "logfile".to_string(),
-                priority: 2,
-            });
-        }
-    }
-    files
-}
-
-fn log_files_from_proc_fd(pid: u32) -> Vec<LogFile> {
-    let mut files = Vec::new();
-    let fd_dir = PathBuf::from(format!("/proc/{pid}/fd"));
-    if let Ok(entries) = std::fs::read_dir(fd_dir) {
-        for entry in entries.flatten() {
-            let fd_name = entry.file_name().to_string_lossy().to_string();
-            if let Ok(target) = std::fs::read_link(entry.path()) {
-                let target_s = target.to_string_lossy();
-                if fd_name == "1"
-                    && !target_s.starts_with("/dev/")
-                    && !target_s.starts_with("pipe:")
-                {
-                    files.push(LogFile {
-                        path: target,
-                        fd: LogFdKind::Stdout,
-                        kind: "redirect".to_string(),
-                        priority: 1,
-                    });
-                } else if fd_name == "2"
-                    && !target_s.starts_with("/dev/")
-                    && !target_s.starts_with("pipe:")
-                {
-                    files.push(LogFile {
-                        path: target,
-                        fd: LogFdKind::Stderr,
-                        kind: "redirect".to_string(),
-                        priority: 1,
-                    });
-                } else if is_log_like_path(&target_s) {
-                    files.push(LogFile {
-                        path: target,
-                        fd: LogFdKind::File,
-                        kind: "logfile".to_string(),
-                        priority: 2,
-                    });
-                }
-            }
-        }
-    }
-    files
-}
-
+#[cfg(test)]
 fn get_process_cwd_from_lsof_result(result: Result<String, PortError>) -> Option<PathBuf> {
     let raw = result.ok().unwrap_or_default();
     raw.lines()
@@ -724,45 +743,24 @@ fn get_system_log_command_with_since(
     follow: bool,
     since: Option<&str>,
 ) -> Option<String> {
-    if cfg!(target_os = "macos") {
-        Some(if follow {
-            format!("log stream --predicate 'processID == {pid}' --style compact")
-        } else {
-            format!(
-                "log show --predicate 'processID == {pid}' --style compact --last {}",
-                since.unwrap_or("1m")
-            )
-        })
-    } else if cfg!(target_os = "linux") {
-        Some(if follow {
-            match since {
-                Some(since) => format!("journalctl _PID={pid} --since {since:?} -f --no-pager"),
-                None => format!("journalctl _PID={pid} -f --no-pager"),
-            }
-        } else {
-            match since {
-                Some(since) => format!("journalctl _PID={pid} --since {since:?} --no-pager -n 50"),
-                None => format!("journalctl _PID={pid} --no-pager -n 50"),
-            }
-        })
-    } else if cfg!(target_os = "windows") {
-        Some(format!(
-            "powershell -Command \"Get-WinEvent -FilterHashtable @{{LogName='Application'; ProcessId={pid}}} -MaxEvents 50\""
-        ))
-    } else {
-        None
-    }
+    crate::platform::native_scanner().get_system_log_command_with_since(pid, follow, since)
 }
 
 pub(crate) fn parse_lines(args: &[String]) -> &str {
     for arg in args {
         if let Some(v) = arg.strip_prefix("--lines=") {
-            return v;
+            if v.parse::<u32>().is_ok() {
+                return v;
+            }
+            return "50";
         }
     }
     for pair in args.windows(2) {
         if pair[0] == "--lines" {
-            return &pair[1];
+            if pair[1].parse::<u32>().is_ok() {
+                return &pair[1];
+            }
+            return "50";
         }
     }
     "50"
@@ -806,11 +804,7 @@ fn apply_grep_to_shell_command(cmd: &str, grep: Option<&str>) -> String {
     let Some(grep) = grep else {
         return cmd.to_string();
     };
-    if cfg!(target_os = "windows") {
-        format!(r#"{cmd} | Select-String -SimpleMatch {grep:?}"#)
-    } else {
-        format!("{cmd} | grep --line-buffered -F -- {grep:?}")
-    }
+    crate::platform::native_scanner().apply_grep_to_shell_command(cmd, grep)
 }
 
 fn logs_usage_lines() -> [String; 3] {
@@ -841,16 +835,15 @@ fn log_header_lines(port_label: &str, pid: u32, process_name: &str) -> [String; 
 mod tests {
     use super::{
         LogSelection, LogSelectionChoice, LogsJsonError, LogsJsonResult, LogsRequestError,
-        TailCommand, apply_grep_to_shell_command, build_tail_command, choose_log_file_index,
+        apply_grep_to_shell_command, build_tail_command, choose_log_file_index,
         get_process_cwd_from_lsof_result, is_log_like_path, log_files_from_lsof_result,
         log_header_lines, logs_usage_lines, merge_log_discovery_results, parse_lines,
         parse_logs_request, render_logs_json_result, run_logs_json_with, select_log_file,
         sort_and_dedupe_log_files, tail_follow_shell_command,
     };
     use crate::error::{PortError, drain_user_warnings, record_user_warning, verbose_test_lock};
-    use crate::model::{
-        KillResolutionKind, KillTargetResolution, LogFdKind, LogFile, PortInfo, ProcessStatus,
-    };
+    use crate::model::{KillResolutionKind, KillTargetResolution, LogFdKind, LogFile, TailCommand};
+    use crate::test_support::fake_port;
     use std::path::PathBuf;
 
     fn args(values: &[&str]) -> Vec<String> {
@@ -1067,6 +1060,22 @@ mod tests {
     }
 
     #[test]
+    fn logs_argument_parsing_rejects_invalid_since_values() {
+        assert!(matches!(
+            parse_logs_request(&args(&["logs", "3000", "--since="])),
+            Err(LogsRequestError::InvalidValue("--since"))
+        ));
+        assert!(matches!(
+            parse_logs_request(&args(&["logs", "3000", "--since=--predicate"])),
+            Err(LogsRequestError::InvalidValue("--since"))
+        ));
+        assert!(matches!(
+            parse_logs_request(&args(&["logs", "3000", "--since=1h;rm"])),
+            Err(LogsRequestError::InvalidValue("--since"))
+        ));
+    }
+
+    #[test]
     fn grep_shell_command_wraps_streaming_plain_mode_commands() {
         let command = apply_grep_to_shell_command("tail -f -n 25 /app/server.log", Some("error"));
 
@@ -1255,6 +1264,22 @@ mod tests {
     }
 
     #[test]
+    fn json_logs_invalid_since_returns_usage_error() {
+        let err = run_logs_json_with(
+            &args(&["logs", "3000", "--since=--predicate"]),
+            |_target| None,
+            |_pid| Vec::new(),
+            |_path, _lines, _follow| Ok(String::new()),
+            |_pid, _follow, _since| None,
+            |_cmd| Ok(String::new()),
+        )
+        .expect_err("invalid since value should fail");
+
+        assert_eq!(err.code, "usage");
+        assert_eq!(err.message, "invalid value for --since");
+    }
+
+    #[test]
     fn json_logs_failure_paths_render_structured_error_envelopes() {
         let follow_json = render_logs_json_result(
             "ports logs 3000 -f",
@@ -1435,25 +1460,6 @@ mod tests {
         );
     }
 
-    fn fake_port(port: u16, pid: u32) -> PortInfo {
-        PortInfo {
-            port,
-            pid,
-            process_name: "node".to_string(),
-            raw_name: "node".to_string(),
-            command: "node server.js".to_string(),
-            cwd: None,
-            project_name: None,
-            framework: None,
-            uptime: None,
-            start_time: None,
-            status: ProcessStatus::Healthy,
-            memory: None,
-            git_branch: None,
-            process_tree: Vec::new(),
-        }
-    }
-
     fn log_file(path: &str, fd: LogFdKind, kind: &str, priority: u8) -> LogFile {
         LogFile {
             path: PathBuf::from(path),
@@ -1464,6 +1470,7 @@ mod tests {
     }
 }
 
+#[allow(clippy::items_after_test_module)]
 fn tail_file(path: &Path, lines: &str, follow: bool, grep: Option<&str>) -> i32 {
     if !follow {
         match read_log_output(path, lines, false) {
@@ -1515,6 +1522,9 @@ fn read_log_output(path: &Path, lines: &str, follow: bool) -> Result<String, Str
             .stdin(Stdio::null())
             .output(),
         TailCommand::Argv(argv) => {
+            if argv.is_empty() {
+                return Err("empty tail command".to_string());
+            }
             let mut cmd = Command::new(&argv[0]);
             cmd.args(&argv[1..]).stdin(Stdio::null()).output()
         }
@@ -1528,75 +1538,18 @@ fn read_log_output(path: &Path, lines: &str, follow: bool) -> Result<String, Str
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum TailCommand {
-    PowerShell { command: String },
-    Argv(Vec<String>),
-}
-
-pub(crate) fn build_tail_command(path: &Path, lines: &str, follow: bool) -> TailCommand {
-    if cfg!(target_os = "windows") {
-        let wait = if follow { " -Wait" } else { "" };
-        TailCommand::PowerShell {
-            command: format!(
-                "Get-Content -Path '{}' -Tail {}{}",
-                path.to_string_lossy(),
-                lines,
-                wait
-            ),
-        }
-    } else {
-        let mut argv = vec!["tail".to_string()];
-        if follow {
-            argv.push("-f".to_string());
-        }
-        argv.push("-n".to_string());
-        argv.push(lines.to_string());
-        argv.push(path.to_string_lossy().to_string());
-        TailCommand::Argv(argv)
-    }
+pub(crate) fn build_tail_command(
+    path: &Path,
+    lines: &str,
+    follow: bool,
+) -> crate::model::TailCommand {
+    crate::platform::native_scanner().build_tail_command(path, lines, follow)
 }
 
 fn run_shell(cmd: &str) -> i32 {
-    let status = if cfg!(target_os = "windows") {
-        Command::new("cmd")
-            .args(["/C", cmd])
-            .stdin(Stdio::inherit())
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .status()
-    } else {
-        Command::new("sh")
-            .args(["-c", cmd])
-            .stdin(Stdio::inherit())
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .status()
-    };
-    if status.map(|s| s.success()).unwrap_or(false) {
-        0
-    } else {
-        1
-    }
+    crate::platform::native_scanner().run_shell(cmd)
 }
 
 fn run_shell_output(cmd: &str) -> Result<String, String> {
-    let output = if cfg!(target_os = "windows") {
-        Command::new("cmd")
-            .args(["/C", cmd])
-            .stdin(Stdio::null())
-            .output()
-    } else {
-        Command::new("sh")
-            .args(["-c", cmd])
-            .stdin(Stdio::null())
-            .output()
-    }
-    .map_err(|err| err.to_string())?;
-
-    if output.status.success() {
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
-    } else {
-        Err(String::from_utf8_lossy(&output.stderr).into_owned())
-    }
+    crate::platform::native_scanner().run_shell_output(cmd)
 }
